@@ -26,28 +26,25 @@
     "episodes",
     "resolve"
   ],
-  "categories": [
-    "tv"
-  ],
   "color": "#0EA5A4",
   "settings": [
     {
       "key": "sondaKdla",
       "type": "action",
       "label": "Sondear Kdramas.lat",
-      "hint": "Prueba el catálogo y fichas de Kdramas.lat paso a paso y escribe lo que encuentra al registro"
+      "hint": "Prueba el catálogo y fichas de Kdramas.lat y anota en el registro"
     },
     {
       "key": "sondaYandi",
       "type": "action",
       "label": "Sondear Yandispoiler",
-      "hint": "Prueba series, temporadas, episodios y el juego de flores de Yandispoiler, y escribe al registro"
+      "hint": "Prueba series, temporadas y episodios de Yandispoiler, anota en el registro"
     },
     {
       "key": "sondaDlat",
       "type": "action",
       "label": "Sondear DoramasLatinoX",
-      "hint": "Prueba el catálogo y fichas de DoramasLatinoX paso a paso y escribe al registro"
+      "hint": "Prueba el catálogo y fichas de DoramasLatinoX y anota en el registro"
     },
     {
       "key": "acercaDe",
