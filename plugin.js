@@ -678,5 +678,4 @@ async function action(key) {
   return null;
 }
 
-{ search, home, browse, episodes, details, resolve, action };
-
+export { search, home, browse, episodes, details, resolve, action };
