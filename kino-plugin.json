@@ -1,98 +1,59 @@
 {
-  "id": "archive-org",
-  "name": "Internet Archive",
-  "version": "1.4.2",
-  "apiVersion": 3,
+  "id": "doramasjing",
+  "name": "DoramasJing",
+  "version": "0.1.0",
+  "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Películas de dominio público y televisión clásica de archive.org",
-  "author": "kinotvapp",
-  "homepage": "https://github.com/kinotvapp/kino-plugin-archive",
+  "description": "Doramas en español latino y subtitulado con tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX): búsqueda, Inicio, catálogo, fichas y episodios. La v0.1 es la lupa: trae el catálogo y trae sondeos que escriben el registro para afincar el reproductor en la 0.2. El sello de Susejing.",
+  "author": "Susejing",
+  "homepage": "https://github.com/Susejing/DoramasJing",
+  "visualBrowser": true,
   "hosts": [
-    "archive.org",
-    "*.archive.org"
+    "kdramas.lat",
+    "www.kdramas.lat",
+    "yandispoiler.net",
+    "www.yandispoiler.net",
+    "doramaslatinox.com",
+    "www.doramaslatinox.com",
+    "*.translate.goog"
   ],
+  "streamHosts": "any",
+  "browser": "pages",
   "capabilities": [
     "search",
     "home",
     "browse",
     "episodes",
-    "resolve",
-    "download"
+    "resolve"
   ],
-  "color": "#E0A030",
-  "icon": "icon.png",
+  "categories": [
+    "tv"
+  ],
+  "color": "#0EA5A4",
   "settings": [
     {
-      "key": "url1",
-      "label": "Dirección 1",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
+      "key": "sondaKdla",
+      "type": "action",
+      "label": "Sondear Kdramas.lat",
+      "hint": "Prueba el catálogo y fichas de Kdramas.lat paso a paso y escribe lo que encuentra al registro"
     },
     {
-      "key": "cat1",
-      "label": "Categoría 1",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
+      "key": "sondaYandi",
+      "type": "action",
+      "label": "Sondear Yandispoiler",
+      "hint": "Prueba series, temporadas, episodios y el juego de flores de Yandispoiler, y escribe al registro"
     },
     {
-      "key": "url2",
-      "label": "Dirección 2",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
+      "key": "sondaDlat",
+      "type": "action",
+      "label": "Sondear DoramasLatinoX",
+      "hint": "Prueba el catálogo y fichas de DoramasLatinoX paso a paso y escribe al registro"
     },
     {
-      "key": "cat2",
-      "label": "Categoría 2",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url3",
-      "label": "Dirección 3",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat3",
-      "label": "Categoría 3",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url4",
-      "label": "Dirección 4",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat4",
-      "label": "Categoría 4",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url5",
-      "label": "Dirección 5",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat5",
-      "label": "Categoría 5",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
-    },
-    {
-      "key": "url6",
-      "label": "Dirección 6",
-      "type": "url",
-      "hint": "https://archive.org/details/… o una búsqueda"
-    },
-    {
-      "key": "cat6",
-      "label": "Categoría 6",
-      "type": "text",
-      "hint": "Opcional: nombre de la fila en el Home"
+      "key": "acercaDe",
+      "type": "action",
+      "label": "Acerca de DoramasJing",
+      "hint": "Versión, fuentes y cómo ayudar a afincar los parsers"
     }
   ]
 }
