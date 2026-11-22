@@ -76,6 +76,12 @@
 // /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
 // el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
 //
+// v0.3.0 «LA FLECHITA EN EL LIENZO» (22 nov, scuola AniJing screen):
+// pantalla propia con selector de fuente EN EL LIENZO (botón «tune»
+// arriba: lista con ✓ sobre la fuente activa; cada bloque de «Todas»
+// lleva su encabezado tocable), filas reutilizadas del Inicio y la
+// elección guardada en kino.storage — no sustituye al setting de
+// Ajustes: ES la flechita que se ve.
 // v0.2.4 «EL VECINO ORDENADO» (22 nov, log 01:49): la re-lectura del
 // vecino ya funciona con UN solo vecino si comparte palabra (≥3 letras)
 // con el slug; vecinos ordenados por afinidad antes de re-leer/visitar.
@@ -87,7 +93,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.2.4';
+const VERSION = '0.3.0';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -977,4 +983,170 @@ async function action(key) {
   return null;
 }
 
-export { search, home, browse, episodes, details, resolve, action };
+/* ===================== LA PANTALLA (v0.3.0, escuela AniJing) ===================== */
+
+const CLAVE_FUENTE_PANTALLA = 'doramasjing_fuente_pantalla';
+
+function fuenteValidaPantalla(x) {
+  const v = String(x || '').toLowerCase().trim();
+  return (v === 'todas' || v === 'kdla' || v === 'yandi' || v === 'dlat') ? v : '';
+}
+
+function fuenteDePantalla(state) {
+  if (state && fuenteValidaPantalla(state.fuente)) return state.fuente;
+  try {
+    const g = kino.storage && kino.storage.get;
+    if (typeof g === 'function') return fuenteValidaPantalla(kino.storage.get(CLAVE_FUENTE_PANTALLA)) || 'todas';
+  } catch (e) { /* el almacen falla sin miedo: 'todas' */ }
+  return 'todas';
+}
+
+/* Las mismas filas del Inicio, con la fuente elegida en EL LIENZO
+ * (no el setting de Ajustes). Cada fila viaja sellada con su fuente
+ * (fila.fuente) para que «Todas» pueda agrupar por bloques tocables. */
+async function pantallaCargar(fuente) {
+  const elegida = fuenteValidaPantalla(fuente) || 'todas';
+  const fuentes = (elegida !== 'todas' && FUENTES[elegida]) ? [FUENTES[elegida]] : Object.values(FUENTES);
+  const rtas = await Promise.all(fuentes.map(async (f) => {
+    try { const filas = await f.portada(true); for (const fila of filas || []) fila.fuente = f.id; return filas || []; }
+    catch (e) {
+      log('portada falló en ' + f.id + ' (pantalla)', (e && e.message) || String(e));
+      return [];
+    }
+  }));
+  const filas = [];
+  for (let i = 0; i < fuentes.length; i++) {
+    const nom = (fuentes[i] && fuentes[i].etiqueta) || 'la fuente';
+    if (rtas[i] && rtas[i].length) for (const fila of rtas[i]) filas.push(fila);
+    else filas.push({ id: 'aviso-' + (fuentes[i] ? fuentes[i].id : 'x'), fuente: fuentes[i] ? fuentes[i].id : 'x', title: nom + ': sin datos por ahora', ref: '', items: [] });
+  }
+  return filas;
+}
+
+function rielDePantalla(fila) {
+  if (!fila || !fila.items || !fila.items.length) {
+    return { type: 'Text', text: String((fila && fila.title) || ''), style: 'bodySmall', padding: 4 };
+  }
+  const riel = { type: 'titleRail', title: String(fila.title || ''), items: fila.items };
+  if (fila.ref) riel.ref = String(fila.ref);
+  return riel;
+}
+
+async function screen(arg) {
+  const a = arg || {};
+  const state = a.state && typeof a.state === 'object' ? a.state : {};
+  const filas = Array.isArray(state.filas) ? state.filas : null;
+  const cuerpo = [];
+  if (state.elegirFuentes === true) {
+    /* El selector dibujado AQUÍ, sin el corte de 8 del menú nativo:
+     * una fila por fuente con ✓ sobre la activa (escuela AniJing
+     * 0.6.11 «La lista completa»). */
+    const actual = fuenteValidaPantalla(state.fuente) || 'todas';
+    const opciones = [{ id: 'todas', nombre: 'Todas las fuentes' }].concat(Object.values(FUENTES).map((f) => ({ id: f.id, nombre: f.etiqueta || f.id })));
+    for (const x of opciones) {
+      cuerpo.push({ type: 'Text', text: (x.id === actual ? '✓ ' : '') + x.nombre, style: 'h3', onTap: { event: 'elegirFuente', arg: x.id } });
+    }
+    cuerpo.push({ type: 'Button', labelText: 'Cancelar', onPressed: 'cerrarFuentes', alignSelf: 'center' });
+  } else if (state.errorPantalla === true) {
+    cuerpo.push({ type: 'errorState', title: 'No se pudo cargar', text: 'Ninguna fuente respondió. Revisa tu conexión y vuelve a probar.' });
+    cuerpo.push({ type: 'Button', labelText: 'Reintentar', onPressed: 'recargar', alignSelf: 'center' });
+  } else if (filas && !filas.length) {
+    cuerpo.push({ type: 'emptyState', title: 'Nada por ahora', text: 'Ninguna fuente trajo doramas en este momento. Prueba con otra o vuelve más tarde.', icon: 'movie' });
+    cuerpo.push({ type: 'Button', labelText: 'Reintentar', onPressed: 'recargar', alignSelf: 'center' });
+  } else if (!filas) {
+    cuerpo.push({ type: 'Skeleton', shape: 'block', height: 240 });
+  } else if ((fuenteValidaPantalla(state.fuente) || 'todas') === 'todas') {
+    /* «Todas»: UN bloque por fuente, encabezado grande tocable —
+     * toucharlo pasa a esa fuente (escuela AniJing 0.5.0). */
+    const bloques = [];
+    const vistos = {};
+    for (const fila of filas) {
+      const fid = fila.fuente || 'x';
+      if (!vistos[fid]) { vistos[fid] = true; bloques.push({ fuente: fid, rieles: [] }); }
+      for (const b of bloques) if (b.fuente === fid) b.rieles.push(rielDePantalla(fila));
+    }
+    for (const b of bloques) {
+      const f = FUENTES[b.fuente];
+      const hijos = [{
+        type: 'Text', text: f ? f.etiqueta : b.fuente, style: 'h3',
+        tooltip: 'Ver solo esta fuente', tooltipEn: 'Show this source only',
+        onTap: { event: 'fuente', arg: b.fuente }
+      }];
+      for (const riel of b.rieles) hijos.push(riel);
+      cuerpo.push({ type: 'Column', gap: 12, children: hijos });
+    }
+    cuerpo.push({ type: 'Text', text: 'DoramasJing v' + VERSION + ' · El dorama con la firma de Susejing', style: 'caption', padding: 4 });
+  } else {
+    for (const fila of filas) cuerpo.push(rielDePantalla(fila));
+    cuerpo.push({ type: 'Text', text: 'DoramasJing v' + VERSION + ' · El dorama con la firma de Susejing', style: 'caption', padding: 4 });
+  }
+  return {
+    type: 'Scaffold',
+    appBar: {
+      type: 'AppBar', dense: true, divider: false, mergeWithKinoBar: true,
+      leading: { type: 'IconButton', icon: 'arrow_back', labelText: 'Cerrar', onPressed: { go: { close: true } } },
+      title: 'DoramasJing',
+      actions: [
+        { type: 'IconButton', icon: 'tune', labelText: 'Elegir fuente', onPressed: 'fuentes' }
+      ]
+    },
+    body: {
+      type: 'SingleChildScrollView',
+      children: [{
+        type: 'Column',
+        gap: 16,
+        padding: { compact: 12, medium: 16, expanded: 24 },
+        children: cuerpo
+      }]
+    }
+  };
+}
+
+async function screenEvent(e) {
+  const ev = e || {};
+  const state = ev.state && typeof ev.state === 'object' ? ev.state : {};
+  const nombre = String(ev.name || '');
+  if (nombre === 'open' || nombre === 'recargar') {
+    const fuente = fuenteDePantalla(state);
+    try {
+      const filas = await pantallaCargar(fuente);
+      return { state: { fuente: fuente, filas: filas, errorPantalla: false } };
+    } catch (err) {
+      log('cargar la pantalla falló', (err && err.message) || String(err));
+      return { state: { fuente: fuente, errorPantalla: true } };
+    }
+  }
+  if (nombre === 'fuentes') {
+    const ns = Object.assign({}, state);
+    ns.elegirFuentes = !ns.elegirFuentes;
+    return { state: ns };
+  }
+  if (nombre === 'cerrarFuentes') {
+    const ns = Object.assign({}, state);
+    ns.elegirFuentes = false;
+    return { state: ns };
+  }
+  if (nombre === 'elegirFuente' || nombre === 'fuente') {
+    const nueva = fuenteValidaPantalla(ev.arg) || 'todas';
+    try {
+      if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set(CLAVE_FUENTE_PANTALLA, nueva);
+    } catch (eS) {
+      log('no se pudo guardar la fuente', (eS && eS.message) || String(eS));
+    }
+    try {
+      const filas = await pantallaCargar(nueva);
+      const rta = { state: { fuente: nueva, filas: filas, errorPantalla: false, elegirFuentes: false } };
+      const nom = nueva === 'todas' ? 'Todas las fuentes' : ((FUENTES[nueva] && FUENTES[nueva].etiqueta) || nueva);
+      rta.toast = nom;
+      return rta;
+    } catch (err) {
+      log('cargar «' + nueva + '» falló', (err && err.message) || String(err));
+      return { state: { fuente: nueva, errorPantalla: true, elegirFuentes: false } };
+    }
+  }
+  return null;
+}
+
+/* ===================== FIN DE LA PANTALLA ===================== */
+
+export { search, home, browse, episodes, details, resolve, action, screen, screenEvent };
