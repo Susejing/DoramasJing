@@ -1,7 +1,7 @@
 {
   "id": "doramasjing",
   "name": "DoramasJing",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Doramas en español latino y subtitulado con tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX): búsqueda, Inicio, catálogo, fichas, episodios y filtros. La v0.2 afina fichas y episodios con pósters de TMDB; el reproductor llega en la 0.3. El sello de Susejing.",

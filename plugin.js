@@ -76,6 +76,9 @@
 // /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
 // el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
 //
+// v0.2.4 «EL VECINO ORDENADO» (22 nov, log 01:49): la re-lectura del
+// vecino ya funciona con UN solo vecino si comparte palabra (≥3 letras)
+// con el slug; vecinos ordenados por afinidad antes de re-leer/visitar.
 // v0.2.3 «LA FLECHITA DE LA FUENTE» (22 nov, capturas en vivo): la 0.2.2
 // desbloqueó a Yandispoiler (el navegador oculto la abrió) y su lista
 // volvió a casa POR PRIMERA VEZ — y Kino la rechazó: el contrato
@@ -84,7 +87,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.2.3';
+const VERSION = '0.2.4';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -680,13 +683,31 @@ function vecinosDeEpisodio(html) {
  * 2) si la página ya muestra ≥2 anclas con OTRO slug, re-leerla con ese
  * slug (la página confesó el vecino en su propia carne); 3) visitar la
  * página del vecino (hasta 3) y robar su «Season Episodes List». */
+/* v0.2.4 (Registro VI, log 01:49): la ficha de «cuando-encuentre la moon»
+ * traía SU lista bajo el slug del vecino «amor-bajo-la-luz-de la luna» y
+ * la cura se cayó al respaldo de búsqueda: la guarda exigía DOS vecinos
+ * distintos y solo había UNO. Ahora un único vecino basta SI comparte
+ * alguna palabra (≥3 letras) con el slug. Y como la barra lateral puede
+ * meter episodiós de otros shows, los vecinos se ordenan por palabras
+ * compartidas antes de re-leer o visitar. */
+function puntosDeVecino(vslug, slug) {
+  const palabras = (' ' + slug + ' ').split('-').filter(function (w) { return w.length >= 3; });
+  return vslug.split('-').filter(function (w) { return palabras.indexOf(w) >= 0; }).length;
+}
+
+function vecinosOrdenados(vecinos, slug) {
+  return vecinos.slice().sort(function (a, b) {
+    return puntosDeVecino(b.slug, slug) - puntosDeVecino(a.slug, slug);
+  });
+}
+
 async function episodiosDeHuellas(huellas, slug) {
   for (const h of huellas) {
     if (!h) continue;
     let eps = episodiosDlat(h, slug);
     if (eps.length) return eps;
-    const vecinos = vecinosDeEpisodio(h);
-    if (vecinos.length > 1) {
+    const vecinos = vecinosOrdenados(vecinosDeEpisodio(h), slug);
+    if (vecinos.length && puntosDeVecino(vecinos[0].slug, slug) > 0) {
       const propio = episodiosDlat(h, vecinos[0].slug);
       if (propio.length >= 2) {
         log('dlat episodios ' + slug + ': la propia página traía la lista bajo el slug del vecino «' + vecinos[0].slug + '»');
