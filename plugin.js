@@ -66,8 +66,17 @@
 // dlat gana dos respaldos de listado: la página /temporada/slug-…-1/ y la
 // del episodio 1x1 (trae la «Season Episodes List» completa). Yandi
 // cerrada (503) también cae con mensaje honesto.
+//
+// v0.2.2 «EL SLUG VECINO» (22 nov, Registro V): la página 1x1 inventada
+// da 404 — el slug interno de un título puede NO ser el de su ficha
+// (p. ej. when-i-meet-the-moon vs cuando-encuentre-la-luna). Cura:
+// cosechar de la ficha CUALQUIER ancla /episodio/<otro-slug>-NxM/ y con
+// ese episodio vecino robar su «Season Episodes List» completa. Los
+// pósters de kdla en el Inicio: el srcSet real viaja como proxy
+// /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
+// el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
 
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -143,11 +152,15 @@ async function traerEnCrudo(url, opts) {
     try {
       const p = await kino.browser.page(url, { timeoutMs: o.timeoutMs || 12000 });
       const htmlN = p && p.html ? String(p.html) : '';
-      if (htmlN.length > 200) {
+      const stN = (p && p.status) != null ? (p && p.status) : 200;
+      /* v0.2.2 (Registro V, 21:50): el navegador trajo una carta de «no
+       * encontrado» con 60907 letras — página grande NO es página buena.
+       * Respetar el status real del navegador. */
+      if (htmlN.length > 200 && stN > 0 && stN < 400) {
         log('el navegador oculto trajo ' + htmlN.length + ' letras (' + String(url).split('/')[2] + ')');
-        return { ok: true, status: (p && p.status) || 200, text: function () { return Promise.resolve(htmlN); }, json: function () { return Promise.resolve({}); } };
+        return { ok: true, status: stN, text: function () { return Promise.resolve(htmlN); }, json: function () { return Promise.resolve({}); } };
       }
-      log('el navegador oculto no trajo HTML (status ' + (p && p.status) + ')');
+      log('el navegador oculto no trajo página buena (status ' + stN + ', ' + htmlN.length + ' letras)');
     } catch (eN) {
       const codeN = (eN && eN.code) || '';
       if (codeN !== 'not_allowed' && codeN !== 'rate_limited') log('el navegador oculto no pudo: ' + (codeN || (eN && eN.message) || eN));
@@ -306,7 +319,9 @@ function caraDe(bloque, origen) {
     if (u && u.indexOf('data:') !== 0) return u;
   }
   const bg = /background(?:-image)?\s*:\s*url\((['"]?)([^'")]+)/i.exec(t);
-  return bg ? absoluta(bg[2], origen) : '';
+  const bgU = bg ? absoluta(bg[2], origen) : '';
+  /* v0.2.2: el marcador difuminado de kdla es un data: conjunto — nunca gana. */
+  return bgU && bgU.indexOf('data:') !== 0 ? bgU : '';
 }
 
 function slugATitulo(slug) {
@@ -360,7 +375,11 @@ function tarjetasDe(html, origen, patron, prefijo) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].at : Math.min(t.length, desde + 2500);
     const antes = t.slice(Math.max(marcas[i].fin, desde - 1500), desde);
     const trozo = t.slice(desde, hasta);
-    const poster = caraDe(trozo, origen) || caraDe(antes, origen) || primeraImagenDe(trozo) || primeraImagenDe(antes) || urlDeSrcSet(trozo) || urlDeSrcSet(antes);
+    /* v0.2.2 (Registro V, pósters kdla vacíos en el Inicio): el srcSet de
+     * kdla viaja como proxy /_next/image?url=<tmdb codificada> — el
+     * decodificador gana ANTES que caraDe (que cae en el proxy o en el
+     * marcador data:), para entregar la TMDB limpia y P334. */
+    const poster = urlDeSrcSet(trozo) || urlDeSrcSet(antes) || caraDe(trozo, origen) || caraDe(antes, origen) || primeraImagenDe(trozo) || primeraImagenDe(antes);
     const tituloM = /<h[1-6]\b[^>]*>([\s\S]{2,200}?)<\/h[1-6]>/i.exec(trozo) ||
       /(?:title|aria-label)\s*=\s*["']([^"']{2,200})["']/i.exec(trozo) ||
       /<strong\b[^>]*>([\s\S]{2,200}?)<\/strong>/i.exec(trozo);
@@ -620,6 +639,59 @@ function episodiosDlat(html, slug) {
   return out;
 }
 
+/* v0.2.2 (Registro V): el slug interno de los episodios puede NO ser el
+ * de la ficha (when-i-meet-the-moon vs cuando-encuentre-la-luna — la
+ * página 1x1 del slug de la ficha dio 404). Cosechar CUALQUIER ancla
+ * /episodio/<otro-slug>-NxM/ de la página: el vecino confiesa el slug
+ * verdadero y su página trae la «Season Episodes List» completa. */
+function vecinosDeEpisodio(html) {
+  const t = String(html || '');
+  const re = /href\s*=\s*["'](?:https?:\/\/(?:www\.)?doramaslatinox\.com)?\/episodio\/([a-z0-9][a-z0-9-]*-\d+x\d+)\/?["']/gi;
+  const vistos = {};
+  const out = [];
+  let m;
+  while ((m = re.exec(t)) !== null && out.length < 20) {
+    const id = m[1];
+    if (vistos[id]) continue;
+    vistos[id] = 1;
+    const baseM = /^(.*?)-(\d+)x(\d+)$/.exec(id);
+    out.push({ id: id, slug: baseM ? baseM[1] : id });
+  }
+  return out;
+}
+
+/* v0.2.2: un solo juicio para TODAS las huellas (ficha, búsqueda,
+ * temporada, episodio 1x1). Orden por huella: 1) patrón del slug propio;
+ * 2) si la página ya muestra ≥2 anclas con OTRO slug, re-leerla con ese
+ * slug (la página confesó el vecino en su propia carne); 3) visitar la
+ * página del vecino (hasta 3) y robar su «Season Episodes List». */
+async function episodiosDeHuellas(huellas, slug) {
+  for (const h of huellas) {
+    if (!h) continue;
+    let eps = episodiosDlat(h, slug);
+    if (eps.length) return eps;
+    const vecinos = vecinosDeEpisodio(h);
+    if (vecinos.length > 1) {
+      const propio = episodiosDlat(h, vecinos[0].slug);
+      if (propio.length >= 2) {
+        log('dlat episodios ' + slug + ': la propia página traía la lista bajo el slug del vecino «' + vecinos[0].slug + '»');
+        return propio;
+      }
+    }
+    for (let i = 0; i < vecinos.length && i < 3; i++) {
+      const v = vecinos[i];
+      const rpv = await traerPagina(BASE_DLAT + '/episodio/' + v.id + '/', 12000);
+      eps = rpv && rpv.ok ? episodiosDlat(rpv.text, v.slug) : [];
+      if (eps.length) {
+        log('dlat episodios ' + slug + ': el vecino ' + v.id + ' confiesa el slug verdadero — lista completa robada de su «Season Episodes List»');
+        return eps;
+      }
+      log('dlat episodios ' + slug + ': el vecino ' + v.id + ' no cedió su lista');
+    }
+  }
+  return [];
+}
+
 registrarFuente({
   id: 'dlat',
   etiqueta: 'DoramasLatinoX',
@@ -676,23 +748,23 @@ registrarFuente({
     /* Huella del 21 nov: capítulos /episodio/slug-NxM/ listados en la
      * ficha (y hasta en los resultados de búsqueda). Rescate por patrón. */
     const rta1 = await traerPagina(BASE_DLAT + '/series/' + slug + '/', 12000);
-    let eps = rta1 && rta1.ok ? episodiosDlat(rta1.text, slug) : [];
+    let eps = await episodiosDeHuellas([rta1 && rta1.text], slug);
     if (!eps.length) {
       const rta2 = await traerPagina(BASE_DLAT + '/?s=' + encodeURIComponent(slug), 10000);
-      eps = rta2 && rta2.ok ? episodiosDlat(rta2.text, slug) : [];
+      eps = await episodiosDeHuellas([rta2 && rta2.text], slug);
       if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la búsqueda (?s=), no en la ficha');
     }
     /* v0.2.1 (huella del episodio 1x6): respaldo por página de temporada. */
     if (!eps.length) {
       const rta3 = await traerPagina(BASE_DLAT + '/temporada/' + slug + '-temporada-1/', 12000);
-      eps = rta3 && rta3.ok ? episodiosDlat(rta3.text, slug) : [];
+      eps = await episodiosDeHuellas([rta3 && rta3.text], slug);
       if (eps.length) log('dlat episodios ' + slug + ': la lista vive en /temporada/slug-temporada-1/');
     }
     /* v0.2.1 (huella del episodio 1x6): la página del PRIMER episodio trae
      * la «Season Episodes List» completa — el respaldo astuto. */
     if (!eps.length) {
       const rta4 = await traerPagina(BASE_DLAT + '/episodio/' + slug + '-1x1/', 12000);
-      eps = rta4 && rta4.ok ? episodiosDlat(rta4.text, slug) : [];
+      eps = await episodiosDeHuellas([rta4 && rta4.text], slug);
       if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la página del episodio 1x1 (Season Episodes List)');
     }
     if (!eps.length) throw errorDe('unavailable', 'dlat episodios sin patrón', 'DoramasLatinoX no listó capítulos para este título (las fuentes pueden tener catálogos distintos). Busca la serie en el Inicio o en las otras fuentes.');
