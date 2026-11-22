@@ -58,8 +58,16 @@
 // DoramasLatinoX: páginas de episodio con «Season Episodes List»
 // (/episodio/slug-NxM/), og:image = logo del sitio (se prefiere la
 // primera URL de image.tmdb.org). El reproductor apunta a la 0.3.
+//
+// v0.2.1 «EL LISTADO HONESTO» (21 nov, Registro IV): kdla NO confiesa
+// capítulos en el HTML crudo (villa Next.js: el listado viaja por JS) →
+// devolver [] hace que Kino diga «la lista de capítulos no es válida»;
+// ahora cae con mensaje honesto que manda al título a las otras fuentes.
+// dlat gana dos respaldos de listado: la página /temporada/slug-…-1/ y la
+// del episodio 1x1 (trae la «Season Episodes List» completa). Yandi
+// cerrada (503) también cae con mensaje honesto.
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -475,7 +483,12 @@ registrarFuente({
     return infoDePaginaSerie(r.text, slug, 'Kdramas.lat', BASE_KDLA);
   },
 
-  async episodios() { return []; }, /* la lupa no inventa capítulos: el sondeo contará */
+  async episodios() {
+    /* v0.2.1: la ficha de kdla no trae capítulos en el HTML crudo (el
+     * listado viaja por JS). [] hace que Kino diga «lista no válida»:
+     * caer con mensaje honesto es la mejor escuela. */
+    throw errorDe('unavailable', 'kdla episodios sin patrón aún', 'Kdramas.lat aún no confiesa sus capítulos (los sondeos siguen buscando). Prueba este título en DoramasLatinoX o Yandispoiler.');
+  },
 
   async resolver() {
     throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear Kdramas.lat» en Ajustes y mándame el Registro.');
@@ -577,7 +590,7 @@ registrarFuente({
       eps = r2 && r2.ok ? episodiosYandi(r2.text, slug) : [];
       if (eps.length) log('yandi episodios ' + slug + ': la lista vive en /temporadas/ (la ficha no la trae)');
     }
-    if (!eps.length) log('yandi episodios ' + slug + ': SIN episodios con el patrón actual (¿viajan por JS? la sondea contará)');
+    if (!eps.length) throw errorDe('unavailable', 'yandi episodios cerrados', 'Yandispoiler sigue bloqueando las lecturas (503). Prueba este título en Kdramas.lat o DoramasLatinoX.');
     return eps;
   },
 
@@ -669,7 +682,20 @@ registrarFuente({
       eps = rta2 && rta2.ok ? episodiosDlat(rta2.text, slug) : [];
       if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la búsqueda (?s=), no en la ficha');
     }
-    if (!eps.length) log('dlat episodios ' + slug + ': SIN capítulos con el patrón /episodio/slug-NxM/ (la sondea contará)');
+    /* v0.2.1 (huella del episodio 1x6): respaldo por página de temporada. */
+    if (!eps.length) {
+      const rta3 = await traerPagina(BASE_DLAT + '/temporada/' + slug + '-temporada-1/', 12000);
+      eps = rta3 && rta3.ok ? episodiosDlat(rta3.text, slug) : [];
+      if (eps.length) log('dlat episodios ' + slug + ': la lista vive en /temporada/slug-temporada-1/');
+    }
+    /* v0.2.1 (huella del episodio 1x6): la página del PRIMER episodio trae
+     * la «Season Episodes List» completa — el respaldo astuto. */
+    if (!eps.length) {
+      const rta4 = await traerPagina(BASE_DLAT + '/episodio/' + slug + '-1x1/', 12000);
+      eps = rta4 && rta4.ok ? episodiosDlat(rta4.text, slug) : [];
+      if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la página del episodio 1x1 (Season Episodes List)');
+    }
+    if (!eps.length) throw errorDe('unavailable', 'dlat episodios sin patrón', 'DoramasLatinoX no listó capítulos para este título (las fuentes pueden tener catálogos distintos). Busca la serie en el Inicio o en las otras fuentes.');
     return eps;
   },
 
@@ -806,7 +832,7 @@ async function action(key) {
   }
   if (key === 'sondaDlat') {
     /* Huella 21 nov: fichas /series/slug/ y capítulos /episodio/slug-NxM/ */
-    const destinos = ['/', '/?s=amor', '/series/cuando-encuentre-la-luna/', '/episodio/erase-un-amor-rural-1x6/'];
+    const destinos = ['/', '/?s=amor', '/series/cuando-encuentre-la-luna/', '/temporada/cuando-encuentre-la-luna-temporada-1/', '/episodio/erase-un-amor-rural-1x6/'];
     return { message: await sondeaFuente('DoramasLatinoX', BASE_DLAT, destinos, PATRON_DLAT, 'episodio') };
   }
   if (key === 'acercaDe') {
