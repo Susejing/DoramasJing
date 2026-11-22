@@ -36,8 +36,18 @@
 // anclas y vocabulario de imágenes). Con esas huellas, la 0.2 trae
 // reproductores con datos y no con adivinanzas. resolver() aún no
 // promete nada: falla con mensaje honesto. Nada de mentiras en pantalla.
+//
+// v0.1.1 «EL REGISTRO HABLÓ» (21 nov 2026, primeras huellas reales del
+// teléfono): kdramas.lat usa /drama/NNNNN con pósters Next.js (marcador
+// data: + la URL real más adelante: fallback de imagen generosa);
+// yandispoiler cierra 503 al fetch directo → el buque ahora también
+// brinca al traductor en no-ok (503/429/502/403); doramaslatinox
+// confiesa TODO: fichas /series/slug/, episodios /episodio/slug-NxM/ y
+// pósters directos de image.tmdb.org → parser de episodios propio; los
+// sondeos suben la huérfana a 3000 letras y listan las URLs de imagen
+// absolutas que encuentren.
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -86,6 +96,21 @@ async function traerEnCrudo(url, opts) {
     if (!pv) throw eDirecto;
     log('Kino negó el directo (' + String(url).split('/')[2] + '): probando el puente del traductor');
     r = await kino.fetch(pv, { headers: o.headers || {}, timeoutMs: o.timeoutMs || 16000 });
+  }
+  /* v0.1.1 (huella real del 21 nov): yandispoiler respondió 503 a TODO el
+   * fetch directo. El buque también brinca al traductor en no-ok. */
+  if (r && !r.ok && (r.status === 503 || r.status === 429 || r.status === 502 || r.status === 403)) {
+    const pv2 = puenteDe(url);
+    if (pv2) {
+      try {
+        const r2 = await kino.fetch(pv2, { headers: o.headers || {}, timeoutMs: (o.timeoutMs || 12000) + 4000 });
+        if (r2 && r2.ok) {
+          log('el sitio cerró ' + r.status + ' (' + String(url).split('/')[2] + '): el puente del traductor respondió');
+          return r2;
+        }
+        log('el sitio cerró ' + r.status + ' y el puente también (' + (r2 && r2.status) + ')');
+      } catch (eP) { log('el sitio cerró ' + r.status + ' y el puente falló: ' + ((eP && eP.message) || eP)); }
+    }
   }
   return r;
 }
@@ -160,7 +185,7 @@ function huespedDe(html, patron) {
   const re = new RegExp('href\\s*=\\s*["\'](' + patron + ')["\']', 'gi');
   const m = re.exec(t);
   if (!m) return '(el patrón no apareció: ' + patron + ')';
-  return t.slice(Math.max(0, m.index - 80), m.index + 800).replace(/\s+/g, ' ');
+  return t.slice(Math.max(0, m.index - 80), m.index + 3000).replace(/\s+/g, ' ');
 }
 
 async function sondeaFuente(nombre, base, destinos, patron) {
@@ -173,8 +198,17 @@ async function sondeaFuente(nombre, base, destinos, patron) {
       const v = vocabularioDe(t);
       const inv = inventarioDe(t, patron);
       let huella = huespedDe(t, patron);
-      if (huella.length > 900) huella = huella.slice(0, 900);
+      if (huella.length > 3000) huella = huella.slice(0, 3000);
+      /* v0.1.1: la lista de URLs de imagen absolutas (kdla esconde el póster
+       * más adelante en el bloque; así el Registro confiesa el host). */
+      const imgs = [];
+      const reImg = /https?:\/\/[^"'\s\\]+?\.(?:jpe?g|webp|png|avif)/gi;
+      let mi;
+      while ((mi = reImg.exec(t)) !== null && imgs.length < 4) {
+        if (imgs.indexOf(mi[0]) < 0) imgs.push(mi[0]);
+      }
       log('sonda ' + nombre + d + ': ' + motivoDeR(r) + ', ' + t.length + ' letras, ' + v + ', anclas-serie: ' + (inv.length ? inv.join(' | ').slice(0, 500) : 'NINGUNA'));
+      if (imgs.length) log('sonda ' + nombre + ' imágenes ' + d + ': ' + imgs.join(' | ').slice(0, 500));
       if (inv.length) log('sonda ' + nombre + ' huérfana ' + d + ': ' + huella);
       partes.push(d + ' ' + t.length + 'l/' + inv.length);
     } catch (e) {
@@ -239,6 +273,13 @@ function prefijoNombre(p) {
   return p === 'kdla' ? 'Kdramas.lat' : p === 'yandi' ? 'Yandispoiler' : 'DoramasLatinoX';
 }
 
+/* v0.1.1 (huella kdla): los pósters viajan como URL absoluta jpg/webp más
+ * adelante del bloque (Next.js con marcador data:). Rescate generoso. */
+function primeraImagenDe(t) {
+  const m = /https?:\/\/[^"'\s\\]+?\.(?:jpe?g|webp|png|avif)/i.exec(String(t || ''));
+  return m ? m[0] : '';
+}
+
 /* La tarjeta genérica: anclas del patrón del sitio + cara atrás/adelante
  * (ventana de 1500 letras, escuela 0.6.2 de AniJing) + idioma por texto. */
 function tarjetasDe(html, origen, patron, prefijo) {
@@ -257,7 +298,7 @@ function tarjetasDe(html, origen, patron, prefijo) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].at : Math.min(t.length, desde + 2500);
     const antes = t.slice(Math.max(marcas[i].fin, desde - 1500), desde);
     const trozo = t.slice(desde, hasta);
-    const poster = caraDe(trozo, origen) || caraDe(antes, origen);
+    const poster = caraDe(trozo, origen) || caraDe(antes, origen) || primeraImagenDe(trozo) || primeraImagenDe(antes);
     const tituloM = /<h[1-6]\b[^>]*>([\s\S]{2,200}?)<\/h[1-6]>/i.exec(trozo) ||
       /(?:title|aria-label)\s*=\s*["']([^"']{2,200})["']/i.exec(trozo) ||
       /<strong\b[^>]*>([\s\S]{2,200}?)<\/strong>/i.exec(trozo);
@@ -486,6 +527,25 @@ registrarFuente({
 
 /* ---------- fuente: doramaslatinox.com ---------- */
 
+/* Huella del 21 nov: los capítulos son /episodio/slug-NxM/ (misma
+ * gramática de yandispoiler). Mismo rescate por patrón de URL. */
+function episodiosDlat(html, slug) {
+  const t = String(html || '');
+  const re = new RegExp('href\\s*=\\s*["\'](?:https?:\\/\\/(?:www\\.)?doramaslatinox\\.com)?\\/episodio\\/(' + slug + '-\\d+x\\d+)\\/?["\']', 'gi');
+  const out = [];
+  const vistos = {};
+  let m;
+  while ((m = re.exec(t)) !== null && out.length < 200) {
+    const id = m[1];
+    if (vistos[id]) continue;
+    vistos[id] = 1;
+    const nM = /(\d+)x(\d+)$/.exec(id);
+    const num = nM ? parseInt(nM[2], 10) : out.length + 1;
+    out.push({ id: 'dlat-' + id, num: num, title: 'Episodio ' + num, options: [] });
+  }
+  return out;
+}
+
 registrarFuente({
   id: 'dlat',
   etiqueta: 'DoramasLatinoX',
@@ -525,7 +585,8 @@ registrarFuente({
   },
 
   async detalle(slug) {
-    const caminos = ['/drama/' + slug, '/serie/' + slug, '/doramas/' + slug];
+    /* Huella del 21 nov: la ficha vive en /series/slug/ (raíz con post-id). */
+    const caminos = ['/series/' + slug + '/', '/series/' + slug, '/drama/' + slug, '/serie/' + slug, '/doramas/' + slug];
     for (const c of caminos) {
       const r = await traerPagina(BASE_DLAT + c, 10000);
       if (r && r.ok && r.text) {
@@ -537,7 +598,19 @@ registrarFuente({
     return null;
   },
 
-  async episodios() { return []; }, /* la lupa no inventa capítulos */
+  async episodios(slug) {
+    /* Huella del 21 nov: capítulos /episodio/slug-NxM/ listados en la
+     * ficha (y hasta en los resultados de búsqueda). Rescate por patrón. */
+    const rta1 = await traerPagina(BASE_DLAT + '/series/' + slug + '/', 12000);
+    let eps = rta1 && rta1.ok ? episodiosDlat(rta1.text, slug) : [];
+    if (!eps.length) {
+      const rta2 = await traerPagina(BASE_DLAT + '/?s=' + encodeURIComponent(slug), 10000);
+      eps = rta2 && rta2.ok ? episodiosDlat(rta2.text, slug) : [];
+      if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la búsqueda (?s=), no en la ficha');
+    }
+    if (!eps.length) log('dlat episodios ' + slug + ': SIN capítulos con el patrón /episodio/slug-NxM/ (la sondea contará)');
+    return eps;
+  },
 
   async resolver() {
     throw errorDe('unavailable', 'resolver v0.1', 'La v0.1 es la lupa: el reproductor llega en la 0.2. Toca «Sondear DoramasLatinoX» en Ajustes y mándame el Registro.');
@@ -661,7 +734,9 @@ async function resolve(ref) {
 
 async function action(key) {
   if (key === 'sondaKdla') {
-    const destinos = ['/', '/series', '/buscar?q=amor', '/serie/une-another', '/dramas'];
+    /* Huella 21 nov: catálogo /series y fichas /drama/NNNNN (el 404 de
+     * /serie/ y /dramas ya confesado). La ficha real revela episodios. */
+    const destinos = ['/', '/series', '/drama/70754', '/buscar?q=amor'];
     return { message: await sondeaFuente('Kdramas.lat', BASE_KDLA, destinos, PATRON_KDLA) };
   }
   if (key === 'sondaYandi') {
@@ -669,7 +744,8 @@ async function action(key) {
     return { message: await sondeaFuente('Yandispoiler', BASE_YANDI, destinos, PATRON_YANDI) };
   }
   if (key === 'sondaDlat') {
-    const destinos = ['/', '/?s=amor', '/dramas', '/drama/un-ejemplo', '/catalogo'];
+    /* Huella 21 nov: fichas /series/slug/ y capítulos /episodio/slug-NxM/ */
+    const destinos = ['/', '/?s=amor', '/series/cuando-encuentre-la-luna/', '/episodio/erase-un-amor-rural-1x6/'];
     return { message: await sondeaFuente('DoramasLatinoX', BASE_DLAT, destinos, PATRON_DLAT) };
   }
   if (key === 'acercaDe') {
