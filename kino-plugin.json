@@ -1,7 +1,7 @@
 {
   "id": "doramasjing",
   "name": "DoramasJing",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Doramas en español latino y subtitulado con tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX): búsqueda, Inicio, catálogo, fichas, episodios y filtros. La v0.2 afina fichas y episodios con pósters de TMDB; el reproductor llega en la 0.3. El sello de Susejing.",
@@ -28,6 +28,19 @@
   ],
   "color": "#0EA5A4",
   "settings": [
+    {
+      "key": "fuente",
+      "type": "select",
+      "label": "Fuente preferida",
+      "hint": "Elige qué fuente llena el Inicio y la búsqueda: todas o una sola",
+      "default": "todas",
+      "options": [
+        { "value": "todas", "label": "Todas las fuentes" },
+        { "value": "kdla", "label": "Kdramas.lat" },
+        { "value": "yandi", "label": "Yandispoiler" },
+        { "value": "dlat", "label": "DoramasLatinoX" }
+      ]
+    },
     {
       "key": "sondaKdla",
       "type": "action",

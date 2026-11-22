@@ -75,8 +75,16 @@
 // pósters de kdla en el Inicio: el srcSet real viaja como proxy
 // /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
 // el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
+//
+// v0.2.3 «LA FLECHITA DE LA FUENTE» (22 nov, capturas en vivo): la 0.2.2
+// desbloqueó a Yandispoiler (el navegador oculto la abrió) y su lista
+// volvió a casa POR PRIMERA VEZ — y Kino la rechazó: el contrato
+// KinoEpisode pide { season, number, ref, title } dentro de
+// { episodes: [...] }, no { id, num } pelados. Cura de forma. Y el
+// selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
+// decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -527,8 +535,13 @@ function episodiosYandi(html, slug) {
     if (vistos[id]) continue;
     vistos[id] = 1;
     const nM = /(\d+)x(\d+)$/.exec(id);
+    const temp = nM ? parseInt(nM[1], 10) : 1;
     const num = nM ? parseInt(nM[2], 10) : out.length + 1;
-    out.push({ id: 'yandi-' + id, num: num, title: 'Episodio ' + num, options: [] });
+    /* v0.2.3 (capturas del 22 nov): KinoEpisode pide { season, number, ref,
+     * title } — con { id, num } la lista «no es válida» (el primer regreso
+     * real de yandi lo destapó; escuela: evitar [] era media cura, la
+     * otra media era la FORMA del episodio). */
+    out.push({ season: temp, number: num, ref: 'yandi:' + id, title: 'Episodio ' + num });
   }
   return out;
 }
@@ -634,7 +647,9 @@ function episodiosDlat(html, slug) {
     vistos[id] = 1;
     const nM = /(\d+)x(\d+)$/.exec(id);
     const num = nM ? parseInt(nM[2], 10) : out.length + 1;
-    out.push({ id: 'dlat-' + id, num: num, title: 'Episodio ' + num, options: [] });
+    const temp = nM ? parseInt(nM[1], 10) : 1;
+    /* v0.2.3: contrato KinoEpisode (season/number/ref), escuela del episodio válido. */
+    out.push({ season: temp, number: num, ref: 'dlat:' + id, title: 'Episodio ' + num });
   }
   return out;
 }
@@ -786,10 +801,34 @@ function partirRef(ref) {
 
 const MAX_ITEMS = 240;
 
+/* v0.2.3 «LA FLECHITA DE LA FUENTE» (pedido del 22 nov): un selector en
+ * Configurar (setting select «fuente») decide si el Inicio y la búsqueda
+ * hablan de TODAS las fuentes o de UNA sola, como la flechita de
+ * MangaTrack. Se lee con la escuela AniJing (configDe con guardias). */
+function configDe(clave) {
+  try {
+    if (kino.config && typeof kino.config.get === 'function') return kino.config.get(clave);
+  } catch (e) {}
+  try {
+    if (kino.config && kino.config[clave] != null) return kino.config[clave];
+  } catch (e) {}
+  return '';
+}
+
+function fuenteDeConfig() {
+  const v = String(configDe('fuente') || '').toLowerCase().trim();
+  return (v === 'kdla' || v === 'yandi' || v === 'dlat') ? v : '';
+}
+
+function fuentesActivas() {
+  const elegida = fuenteDeConfig();
+  return (elegida && FUENTES[elegida]) ? [FUENTES[elegida]] : Object.values(FUENTES);
+}
+
 async function search(query) {
   const q = query && typeof query.q === 'string' ? query.q.trim() : '';
   if (!q && !(query && (query.originalTitle || (query.altTitles || []).length))) return [];
-  const fuentes = Object.values(FUENTES);
+  const fuentes = fuentesActivas();
   const respuestas = await Promise.all(fuentes.map(async (f) => {
     try {
       if (typeof f.buscar !== 'function') return { items: [], fallo: false };
@@ -824,7 +863,7 @@ async function search(query) {
 /* La aduana del Inicio (escuela de la armadura 0.4.72): si una fuente
  * no trae nada, la fila avisa; el home NUNCA revienta entero. */
 async function home() {
-  const fuentes = Object.values(FUENTES);
+  const fuentes = fuentesActivas();
   const rtas = await Promise.all(fuentes.map(async (f) => {
     try { return await f.portada(true); }
     catch (e) {
@@ -866,7 +905,11 @@ async function episodes(ref) {
       userMessage: 'Ese título ya no es válido. Búscalo de nuevo.'
     });
   }
-  return FUENTES[p.fuente].episodios(p.partes[0]);
+  /* v0.2.3: KinoEpisodes pide un OBJETO con la lista adentro — si la
+   * fuente devolvió el array pelado, se envuelve aquí (y la FUENTE ya
+   * emite episodios con la forma KinoEpisode: season/number/ref/title). */
+  const r = await FUENTES[p.fuente].episodios(p.partes[0]);
+  return Array.isArray(r) ? { episodes: r } : r;
 }
 
 async function details(ref) {
