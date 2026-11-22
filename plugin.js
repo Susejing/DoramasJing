@@ -46,8 +46,20 @@
 // pósters directos de image.tmdb.org → parser de episodios propio; los
 // sondeos suben la huérfana a 3000 letras y listan las URLs de imagen
 // absolutas que encuentren.
+//
+// v0.2.0 «LA FICHA CONFESÓ» (21 nov 2026, Registro III): kdramas.lat
+// usa pósters de image.tmdb.org escondidos CODIFICADOS en el srcSet
+// (url=https%3A%2F%2F...) → decodificador propio; su ficha /drama/NNNNN
+// trae og:title/og:description/og:image completos → parser con manifiesto
+// og. Yandispoiler cerró 503 al directo Y 400 al traductor → escalera de
+// 3 peldaños: directo ▸ traductor (separador ? o & correcto) ▸ navegador
+// oculto (kino.browser.page, solo desde search/home/browse/episodes/
+// resolve con la persona en la app; los sondeos marcan escalera:false).
+// DoramasLatinoX: páginas de episodio con «Season Episodes List»
+// (/episodio/slug-NxM/), og:image = logo del sitio (se prefiere la
+// primera URL de image.tmdb.org). El reproductor apunta a la 0.3.
 
-const VERSION = '0.1.1';
+const VERSION = '0.2.0';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -71,11 +83,14 @@ function errorDe(code, msg, userMessage) {
 }
 
 /* El puente del traductor (escuela MangaTrack v0.4.73): si Kino niega el
- * directo, el mismo camino viaja por *.translate.goog con guiones. */
+ * directo, el mismo camino viaja por *.translate.goog con guiones.
+ * v0.2.0: separador correcto (? o &) cuando el camino ya trae query. */
 function puenteDe(url) {
-  const m = /^https?:\/\/([^/]+)(\/.*)?$/i.exec(String(url || ''));
+  const m = /^https?:\/\/([^/?]+)(\/.*)?$/i.exec(String(url || ''));
   if (!m) return null;
-  return 'https://' + m[1].replace(/\./g, '-') + '.translate.goog' + (m[2] || '/') + '?_x_tr_sl=auto&_x_tr_tl=es&_x_tr_hl=es';
+  const camino = m[2] || '/';
+  const sep = camino.indexOf('?') >= 0 ? '&' : '?';
+  return 'https://' + m[1].replace(/\./g, '-') + '.translate.goog' + camino + sep + '_x_tr_sl=auto&_x_tr_tl=es&_x_tr_hl=es';
 }
 
 async function traerEnCrudo(url, opts) {
@@ -110,6 +125,24 @@ async function traerEnCrudo(url, opts) {
         }
         log('el sitio cerró ' + r.status + ' y el puente también (' + (r2 && r2.status) + ')');
       } catch (eP) { log('el sitio cerró ' + r.status + ' y el puente falló: ' + ((eP && eP.message) || eP)); }
+    }
+  }
+  /* v0.2.0: tercer peldaño para 503/400 (huella yandispoiler del 21 nov):
+   * el navegador oculto de Kino. Solo con la persona en la app y desde
+   * search/home/browse/episodes/resolve — los sondeos marcan escalera:false. */
+  const escalera = o.escalera !== false;
+  if ((r == null || (r && !r.ok)) && escalera && kino.browser && typeof kino.browser.page === 'function') {
+    try {
+      const p = await kino.browser.page(url, { timeoutMs: o.timeoutMs || 12000 });
+      const htmlN = p && p.html ? String(p.html) : '';
+      if (htmlN.length > 200) {
+        log('el navegador oculto trajo ' + htmlN.length + ' letras (' + String(url).split('/')[2] + ')');
+        return { ok: true, status: (p && p.status) || 200, text: function () { return Promise.resolve(htmlN); }, json: function () { return Promise.resolve({}); } };
+      }
+      log('el navegador oculto no trajo HTML (status ' + (p && p.status) + ')');
+    } catch (eN) {
+      const codeN = (eN && eN.code) || '';
+      if (codeN !== 'not_allowed' && codeN !== 'rate_limited') log('el navegador oculto no pudo: ' + (codeN || (eN && eN.message) || eN));
     }
   }
   return r;
@@ -178,26 +211,35 @@ function inventarioDe(html, patron, tope) {
   return out;
 }
 
-/* La huérfana: ~800 letras crudas alrededor de la primera ancla del
- * patrón — la materia prima exacta para escribir los parsers de la 0.2. */
-function huespedDe(html, patron) {
+/* La huérfana: ~3000 letras crudas alrededor de la primera ancla del
+ * patrón — la materia prima exacta para escribir los parsers. v0.2.0:
+ * si el PRIMER ancla vive en el <head>, centrar en el ancla objetivo. */
+function huespedDe(html, patron, objetivo) {
   const t = String(html || '');
   const re = new RegExp('href\\s*=\\s*["\'](' + patron + ')["\']', 'gi');
   const m = re.exec(t);
   if (!m) return '(el patrón no apareció: ' + patron + ')';
-  return t.slice(Math.max(0, m.index - 80), m.index + 3000).replace(/\s+/g, ' ');
+  /* v0.2.0: cuando el PRIMER ancla vive en el <head> (canonical/og:url),
+   * centrar la huérfana en el ancla del OBJETIVO (p. ej. 'episodio'). */
+  let centro = m.index;
+  if (objetivo) {
+    const re2 = new RegExp('href\\s*=\\s*["\'](' + objetivo + ')["\']', 'gi');
+    const m2 = re2.exec(t);
+    if (m2 && m2.index > m.index) centro = m2.index;
+  }
+  return t.slice(Math.max(0, centro - 80), centro + 3000).replace(/\s+/g, ' ');
 }
 
-async function sondeaFuente(nombre, base, destinos, patron) {
+async function sondeaFuente(nombre, base, destinos, patron, objetivo) {
   const partes = [];
   await Promise.all(destinos.map(async (d) => {
     const url = base + d;
     try {
-      const r = await traerEnCrudo(url, {});
+      const r = await traerEnCrudo(url, { escalera: false, timeoutMs: 12000 });
       const t = r && r.text ? await r.text() : '';
       const v = vocabularioDe(t);
       const inv = inventarioDe(t, patron);
-      let huella = huespedDe(t, patron);
+      let huella = huespedDe(t, patron, objetivo);
       if (huella.length > 3000) huella = huella.slice(0, 3000);
       /* v0.1.1: la lista de URLs de imagen absolutas (kdla esconde el póster
        * más adelante en el bloque; así el Registro confiesa el host). */
@@ -248,6 +290,10 @@ function caraDe(bloque, origen) {
   ];
   for (let i = 0; i < intentos.length; i++) {
     const m = intentos[i].exec(t);
+    /* v0.2.0: los srcSet codificados de Next.js traman 'url=https%3A…' con
+     * la base pegada por absoluta(): NO son URLs. Se saltan aquí CRUDOS y
+     * los gana urlDeSrcSet al final de la cadena. */
+    if (m && m[1] && /^url=/.test(m[1])) continue;
     const u = m ? absoluta(m[1], origen) : '';
     if (u && u.indexOf('data:') !== 0) return u;
   }
@@ -280,6 +326,14 @@ function primeraImagenDe(t) {
   return m ? m[0] : '';
 }
 
+/* v0.2.0 (huella kdla): el póster del bloque viaja CODIFICADO en el
+ * srcSet de Next.js — url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2F...jpg */
+function urlDeSrcSet(t) {
+  const m = /url=(https?%3A%2F%2F[^&"'\s]+)/i.exec(String(t || ''));
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]); } catch (e) { return ''; }
+}
+
 /* La tarjeta genérica: anclas del patrón del sitio + cara atrás/adelante
  * (ventana de 1500 letras, escuela 0.6.2 de AniJing) + idioma por texto. */
 function tarjetasDe(html, origen, patron, prefijo) {
@@ -298,7 +352,7 @@ function tarjetasDe(html, origen, patron, prefijo) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].at : Math.min(t.length, desde + 2500);
     const antes = t.slice(Math.max(marcas[i].fin, desde - 1500), desde);
     const trozo = t.slice(desde, hasta);
-    const poster = caraDe(trozo, origen) || caraDe(antes, origen) || primeraImagenDe(trozo) || primeraImagenDe(antes);
+    const poster = caraDe(trozo, origen) || caraDe(antes, origen) || primeraImagenDe(trozo) || primeraImagenDe(antes) || urlDeSrcSet(trozo) || urlDeSrcSet(antes);
     const tituloM = /<h[1-6]\b[^>]*>([\s\S]{2,200}?)<\/h[1-6]>/i.exec(trozo) ||
       /(?:title|aria-label)\s*=\s*["']([^"']{2,200})["']/i.exec(trozo) ||
       /<strong\b[^>]*>([\s\S]{2,200}?)<\/strong>/i.exec(trozo);
@@ -327,9 +381,13 @@ function tarjetasDe(html, origen, patron, prefijo) {
 function infoDePaginaSerie(html, slug, nombre, origen) {
   const t = String(html || '');
   const hM = /<h1\b[^>]*>([\s\S]{2,200}?)<\/h1>/i.exec(t);
-  const titulo = (hM ? limpio(hM[1]) : '') || slugATitulo(slug);
+  const ogM = /<meta\s+property=["']og:title["']\s+content=["']([^"']{2,200})["']/i.exec(t);
+  const titulo = (hM ? limpio(hM[1]) : '')
+    || (ogM ? limpio(ogM[1]).replace(/\s*\|\s*[^|]+$/, '').trim() : '')
+    || slugATitulo(slug);
   const dM = /<meta\s+name=["']description["']\s+content=["']([^"']{20,600})["']/i.exec(t);
-  const descM = dM || /(?:sinopsis|description|resumen)[^>]*>([\s\S]{40,600}?)</i.exec(t);
+  const ogD = /<meta\s+property=["']og:description["']\s+content=["']([^"']{20,600})["']/i.exec(t);
+  const descM = dM || ogD || /(?:sinopsis|description|resumen)[^>]*>([\s\S]{40,600}?)</i.exec(t);
   const anhoM = /\b(?:19|20)\d{2}\b/.exec(t);
   const caraM = /<meta\s+(?:property|name)=["']og:image["']\s+content=["']([^"']+)["']/i.exec(t);
   const info = {
@@ -338,7 +396,10 @@ function infoDePaginaSerie(html, slug, nombre, origen) {
     year: anhoM ? anhoM[0] : null,
     badges: [nombre]
   };
-  const poster = caraM ? absoluta(caraM[1], origen) : caraDe(primerBloqueConImagen(t), origen);
+  /* v0.2.0 (huellas): el póster real es de image.tmdb.org en kdla y dlat;
+   * en dlat el og:image es el logo del sitio, así que TMDB gana. */
+  const tmM = /https:\/\/image\.tmdb\.org\/t\/p\/[^"'\s\\]+/.exec(t);
+  const poster = tmM ? absoluta(tmM[0], origen) : (caraM ? absoluta(caraM[1], origen) : caraDe(primerBloqueConImagen(t), origen)) || urlDeSrcSet(t);
   if (poster) info.poster = poster;
   return info;
 }
@@ -404,12 +465,12 @@ registrarFuente({
   },
 
   async detalle(slug) {
-    const r = await traerPagina(BASE_KDLA + '/serie/' + slug, 12000);
+    /* Huellas 21 nov: la ficha vive en /drama/NNNNN (numérica) y trae
+     * og:title/og:description/og:image completos. */
+    const r = await traerPagina(BASE_KDLA + '/drama/' + slug, 12000);
     if (!r || !r.ok || !r.text) {
-      const r2 = await traerPagina(BASE_KDLA + '/series/' + slug, 12000);
-      if (!r2 || !r2.ok || !r2.text) return null;
-      log('kdla detalle: la ficha vive en /series/' + slug + ' (no /serie/)');
-      return infoDePaginaSerie(r2.text, slug, 'Kdramas.lat', BASE_KDLA);
+      log('kdla detalle: /drama/' + slug + ' no confesó (' + motivoDeR(r) + ')');
+      return null;
     }
     return infoDePaginaSerie(r.text, slug, 'Kdramas.lat', BASE_KDLA);
   },
@@ -417,7 +478,7 @@ registrarFuente({
   async episodios() { return []; }, /* la lupa no inventa capítulos: el sondeo contará */
 
   async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La v0.1 es la lupa: el reproductor llega en la 0.2. Toca «Sondear Kdramas.lat» en Ajustes y mándame el Registro.');
+    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear Kdramas.lat» en Ajustes y mándame el Registro.');
   }
 });
 
@@ -507,8 +568,8 @@ registrarFuente({
   },
 
   async episodios(slug) {
-    /* La lista vive en la ficha y en /temporadas/: la 0.2 la leerá con
-     * la huella del sondeo. v0.1: lo que la forma conocida de URL dé. */
+    /* La lista vive en la ficha y en /temporadas/: la 0.3 la leerá con
+     * la huella del sondeo. v0.2: lo que la forma conocida de URL dé. */
     const r1 = await traerPagina(BASE_YANDI + '/series/' + slug + '/', 12000);
     let eps = r1 && r1.ok ? episodiosYandi(r1.text, slug) : [];
     if (!eps.length) {
@@ -521,7 +582,7 @@ registrarFuente({
   },
 
   async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La v0.1 es la lupa: el reproductor llega en la 0.2. Toca «Sondear Yandispoiler» en Ajustes y mándame el Registro.');
+    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear Yandispoiler» en Ajustes y mándame el Registro.');
   }
 });
 
@@ -613,7 +674,7 @@ registrarFuente({
   },
 
   async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La v0.1 es la lupa: el reproductor llega en la 0.2. Toca «Sondear DoramasLatinoX» en Ajustes y mándame el Registro.');
+    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear DoramasLatinoX» en Ajustes y mándame el Registro.');
   }
 });
 
@@ -737,16 +798,16 @@ async function action(key) {
     /* Huella 21 nov: catálogo /series y fichas /drama/NNNNN (el 404 de
      * /serie/ y /dramas ya confesado). La ficha real revela episodios. */
     const destinos = ['/', '/series', '/drama/70754', '/buscar?q=amor'];
-    return { message: await sondeaFuente('Kdramas.lat', BASE_KDLA, destinos, PATRON_KDLA) };
+    return { message: await sondeaFuente('Kdramas.lat', BASE_KDLA, destinos, PATRON_KDLA, 'capitulo|episodio') };
   }
   if (key === 'sondaYandi') {
     const destinos = ['/', '/series/', '/series/love-in-disguise/', '/temporadas/love-in-disguise-temporada-1/', '/episodios/love-in-disguise-1x9/'];
-    return { message: await sondeaFuente('Yandispoiler', BASE_YANDI, destinos, PATRON_YANDI) };
+    return { message: await sondeaFuente('Yandispoiler', BASE_YANDI, destinos, PATRON_YANDI, 'episodio') };
   }
   if (key === 'sondaDlat') {
     /* Huella 21 nov: fichas /series/slug/ y capítulos /episodio/slug-NxM/ */
     const destinos = ['/', '/?s=amor', '/series/cuando-encuentre-la-luna/', '/episodio/erase-un-amor-rural-1x6/'];
-    return { message: await sondeaFuente('DoramasLatinoX', BASE_DLAT, destinos, PATRON_DLAT) };
+    return { message: await sondeaFuente('DoramasLatinoX', BASE_DLAT, destinos, PATRON_DLAT, 'episodio') };
   }
   if (key === 'acercaDe') {
     return { message: 'DoramasJing v' + VERSION + ' — doramas en español por Susejing, hermano de AniJing. GPL-3.0: usa, mejora y comparte con crédito.' };
