@@ -138,7 +138,21 @@
 // honestos con mensaje que guía (el pendiente de kdla viaja por JS; la
 // aduana de las flores de yandi quedó en la mesa).
 
-const VERSION = '0.3.6';
+// v0.3.7 «EL MENSAJERO DEL AJAX» (24 nov, cambio de táctica pedido por el
+// usuario tras la prueba del 23:57: el botón dio varias tocadas y la
+// captura con autoplay siguió sin pescar nada, «nothing playable» SIEMPRE).
+// El HTML crudo trae box_links VACÍO: los servidores viajan POR JAVASCRIPT
+// y casi seguro el reproductor habla con wp-admin/admin-ajax.php (el patrón
+// clásico de los temas dooplay: POST action=candidata&post=<postid>&nume=n
+// &sece=s). La 0.3.7: el postid se roba del propio HTML de la página del
+// episodio y el teléfono le pregunta SOLO al mensajero (candidatas
+// clásicas, sin fuerza bruta); lo que confiese (mp4/m3u8) viaja como
+// Stream CON Referer; los iframes que apuntan a reproductores ajenos
+// quedan de PISTA en el Registro. Sondea nueva «Sondear el cargador de
+// DoramasLatinoX» confiesa TODO (scripts, postid, respuesta letra a letra
+// de cada candidata). La captura con autoplay queda de segundo resort.
+
+const VERSION = '0.3.7';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -1013,9 +1027,23 @@ registrarFuente({
     if (!/^[a-z0-9-]+\d+x\d+$/i.test(id)) {
       throw errorDe('not_found', 'episodio inválido', 'Ese episodio ya no es válido. Vuelve a la lista de capítulos.');
     }
-    const memo = await this.capturaDeEpisodio(id, false);
+    /* memoria primero (10 min, lectura directa para poder meter el
+     * mensajero de la 0.3.7 ANTES de la captura). */
+    let memo = null;
+    try {
+      const rM = kino.storage && typeof kino.storage.get === 'function' ? kino.storage.get('djResolv:' + id) : null;
+      if (rM && rM.media && rM.media.length && Number.isFinite(rM.t) && (Date.now() - rM.t) < 600000) memo = rM;
+    } catch (eM) { /* la memoria nunca rompe */ }
     if (memo && memo.media && memo.media.length) {
       return streamDeCaptura(id, memo, true);
+    }
+    /* v0.3.7 «EL MENSAJERO DEL AJAX»: preguntar primero al admin-ajax
+     * (2-5 s, barato); la captura SOLO si el mensajero no confiesa (75 s
+     * de resolve alcanzan para ambos). El robo guarda su pesca en la
+     * misma memoria 'djResolv:<id>'. */
+    const robado = await roboDeCargador(id, false);
+    if (robado && robado.media && robado.media.length) {
+      return streamDeCaptura(id, robado, false);
     }
     const cap = await this.capturaDeEpisodio(id, true);
     if (cap && cap.media && cap.media.length) {
@@ -1214,6 +1242,106 @@ async function resolverAlternoDlat(idEp, idx) {
   return st;
 }
 
+// ---------- v0.3.7: EL MENSAJERO DEL AJAX ----------
+
+/* Las candidatas del action (el patrón dooplay y sus variantes típicas de
+ * los temas de WordPress de estos sitios: el reproductor se pide con POST
+ * action=<candidata>&post=<id>&nume=<n>&sece=<s>). Sin fuerza bruta: la
+ * primera que confiese gana (resolve tiene 75 s y el mensajero es barato). */
+const CANDIDATAS_DLAT = ['doo_player_ajax', 'dooplay_player_ajax', 'dt_player_ajax', 'doo_player', 'player_ajax'];
+
+/* El postid del episodio vive en el body class (single-post postid-NNNN)
+ * o en un id="post-NNNN" asomando; helper tolerante. */
+function pidDePagina(html) {
+  const t = String(html || '');
+  const m = /postid-(\d+)/i.exec(t) || /id=["']post-(\d+)["']/i.exec(t);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/* Todo lo reproducible del HTML del mensajero (mp4/m3u8 directos) y las
+ * pistas de los iframes que solo apuntan a reproductores ajenos (los
+ * guardamos SOLO en el Registro: servir un iframe como Stream truena en
+ * el reproductor de Kino; servimos lo que se pueda reproducir de verdad). */
+function mediaDeCargador(txt) {
+  const t = String(txt || '');
+  const media = [];
+  const reM = /https?:\/\/[^"'\s<>\\]+?\.(?:mp4|m3u8)(?:\?[^"'\s<>\\]*)?/gi;
+  let mi;
+  while ((mi = reM.exec(t)) !== null && media.length < 8) {
+    const u = mi[0];
+    let ya = false;
+    for (const x of media) { if (x.url === u) { ya = true; break; } }
+    if (!ya) media.push({ url: u, mime: /\.m3u8/i.test(u) ? 'application/x-mpegURL' : 'video/mp4', headers: { Referer: BASE_DLAT + '/' } });
+  }
+  const iframes = [];
+  const reI = /<iframe[^>]+src=["']([^"']+)["']/gi;
+  let ii;
+  while ((ii = reI.exec(t)) !== null && iframes.length < 6) {
+    const h = String(ii[1]).replace(/^https?:\/\//, '').split('/')[0];
+    if (h && iframes.indexOf(h) < 0) iframes.push(h);
+  }
+  return { media: media, iframes: iframes };
+}
+
+/* La táctica de la 0.3.7: la página del episodio confiesa su postid, el
+ * teléfono pregunta al mensajero (admin-ajax por POST, candidatas
+ * clásicas) y lo que confiese viaja como Stream con Referer. La pesca
+ * queda en la MISMA memoria 'djResolv:<id>' de la captura (10 min).
+ * modoSonda=true escribe TODO en el Registro (scripts del tema, postid,
+ * respuesta letra a letra de cada candidata): es la sondea nueva.
+ * Sin postid o sin media: null limpio (la captura sigue de segundo resort). */
+async function roboDeCargador(idEp, modoSonda) {
+  const id = String(idEp || '').trim();
+  const mx = /^([a-z0-9-]+?)(\d+)x(\d+)$/i.exec(id);
+  if (!mx) return null;
+  const sece = mx[2].replace(/^0+/, '') || '1';
+  const nume = mx[3].replace(/^0+/, '') || '1';
+  let html = '';
+  try {
+    const pagina = await traerEnCrudo(BASE_DLAT + '/episodio/' + id + '/', { escalera: false, timeoutMs: 12000 });
+    html = pagina && pagina.text ? await pagina.text() : '';
+  } catch (eP) {
+    if (modoSonda) log('sonda cargador dlat: la página del episodio falló: ' + ((eP && eP.message) || eP));
+    return null;
+  }
+  const pid = pidDePagina(html);
+  if (modoSonda) {
+    const srcs = (html.match(/src=["'][^"']+\.js[^"']*/gi) || []).slice(0, 8);
+    log('sonda cargador dlat ' + id + ': página ' + html.length + ' letras, postid=' + (pid || 'NINGUNO') + ', scripts: ' + (srcs.length ? srcs.join(' | ').slice(0, 500) : 'NINGUNO'));
+  }
+  if (!pid) return null;
+  const poses = [];
+  for (let ci = 0; ci < CANDIDATAS_DLAT.length; ci++) {
+    const act = CANDIDATAS_DLAT[ci];
+    let txt = '';
+    let st = 0;
+    try {
+      const r = await kino.fetch(BASE_DLAT + '/wp-admin/admin-ajax.php', {
+        method: 'POST',
+        headers: { Accept: '*/*', 'content-type': 'application/x-www-form-urlencoded', Referer: BASE_DLAT + '/episodio/' + id + '/' },
+        body: 'action=' + act + '&post=' + pid + '&nume=' + nume + '&sece=' + sece,
+        timeoutMs: 12000
+      });
+      st = (r && r.status) || 0;
+      txt = r && r.text ? await r.text() : '';
+    } catch (eA) {
+      if (modoSonda) log('sonda cargador dlat: ' + act + ' FALLÓ: ' + ((eA && eA.message) || eA));
+      continue;
+    }
+    const mH = mediaDeCargador(txt);
+    if (modoSonda) log('sonda cargador dlat: ' + act + ' → status ' + st + ', ' + txt.length + ' letras, media=' + mH.media.length + (mH.iframes.length ? ', iframes: ' + mH.iframes.join(', ') : '') + ' · ' + txt.slice(0, 160).replace(/\s+/g, ' '));
+    poses.push(act);
+    if (mH.media.length) {
+      const memo = { t: Date.now(), media: mH.media, subs: [], via: 'ajax:' + act };
+      try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memo); } catch (eS) { /* la memoria nunca rompe */ }
+      log('dlat robo ' + id + ': el mensajero confesó ' + memo.media.length + ' enlace(s) vía ' + act);
+      return memo;
+    }
+  }
+  if (modoSonda) log('sonda cargador dlat: ninguna candidata entregó media (' + poses.join(', ') + ')');
+  return null;
+}
+
 /* ---------- los sondeos (el corazón de la lupa) ---------- */
 
 async function action(key) {
@@ -1231,6 +1359,17 @@ async function action(key) {
     /* Huella 21 nov: fichas /series/slug/ y capítulos /episodio/slug-NxM/ */
     const destinos = ['/', '/?s=amor', '/series/cuando-encuentre-la-luna/', '/temporada/cuando-encuentre-la-luna-temporada-1/', '/episodio/erase-un-amor-rural-1x6/'];
     return { message: await sondeaFuente('DoramasLatinoX', BASE_DLAT, destinos, PATRON_DLAT, 'episodio') };
+  }
+  if (key === 'sondaDlatAjax') {
+    /* v0.3.7 «EL MENSAJERO DEL AJAX»: la sondea del cargador — el teléfono
+     * corre la táctica del ajax en modo diagnosticador (sin navegar, sin
+     * captura) y TODO confesión queda en el Registro. */
+    try {
+      const res = await roboDeCargador('erase-un-amor-rural-1x6', true);
+      return { message: res ? 'La sondea del cargador PESCÓ: hay media en el Registro. Mándame el Registro (Ajustes ▸ Registro de DoramasJing) y afino el robo final.' : 'La sondea del cargador terminó sin pesca: TODO lo que confesó (o negó) quedó en el Registro. Mándame el Registro (Ajustes ▸ Registro de DoramasJing) y afino la táctica.' };
+    } catch (eS) {
+      return { message: 'La sondea del cargador falló: ' + ((eS && eS.message) || eS) + '. Mándame el Registro igual.' };
+    }
   }
   if (key === 'acercaDe') {
     return { message: 'DoramasJing v' + VERSION + ' — doramas en español por Susejing, hermano de AniJing. GPL-3.0: usa, mejora y comparte con crédito.' };

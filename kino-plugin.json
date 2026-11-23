@@ -1,10 +1,10 @@
 {
   "id": "doramasjing",
   "name": "DoramasJing",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Doramas en español latino y subtitulado con tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX): búsqueda, Inicio, catálogo, fichas, episodios y reproductor con servidores. La v0.3 trae pantalla propia, memoria de la lupa y el reproductor con captura. El sello de Susejing.",
+  "description": "Doramas en español latino y subtitulado con tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX): búsqueda, Inicio, catálogo, fichas, episodios y reproductor. La 0.3.7 roba los servidores preguntándole al mensajero del sitio (ajax) con la captura de respaldo. El sello de Susejing.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/DoramasJing",
   "visualBrowser": true,
@@ -71,6 +71,11 @@
       "type": "action",
       "label": "Sondear DoramasLatinoX",
       "hint": "Prueba el catálogo y fichas de DoramasLatinoX y anota en el registro"
+    },
+    {
+      "key": "sondaDlatAjax",
+      "type": "action",
+      "label": "Sondear el cargador de DLatinoX"
     },
     {
       "key": "acercaDe",
