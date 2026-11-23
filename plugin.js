@@ -76,6 +76,15 @@
 // /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
 // el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
 //
+// v0.3.2 «LA MEMORIA DE LA PANTALLA» (22 nov, capturas 19:13): la flechita
+// VIVIÓ en el teléfono (0.3.1: pantalla, selector ✓, bloques tocables,
+// pósters en kdla y dlat) — pero yandi «sin datos por ahora»: el navegador
+// oculto NO está permitido dentro del lienzo propio (la plataforma solo lo
+// deja en search/home/browse/episodes/details/section/resolve). Cura: cada
+// portada buena se GUARDA en kino.storage (recortada, con marca de tiempo)
+// y en la pantalla, si la fuente calla, se devuelve lo guardado con su
+// edad al log. La memoria se llena en cualquier flujo de Kino que sí
+// permita el navegador.
 // v0.3.0 «LA FLECHITA EN EL LIENZO» (22 nov, scuola AniJing screen):
 // pantalla propia con selector de fuente EN EL LIENZO (botón «tune»
 // arriba: lista con ✓ sobre la fuente activa; cada bloque de «Todas»
@@ -93,7 +102,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -892,8 +901,11 @@ async function search(query) {
 async function home() {
   const fuentes = fuentesActivas();
   const rtas = await Promise.all(fuentes.map(async (f) => {
-    try { return await f.portada(true); }
-    catch (e) {
+    try {
+      const filas = await f.portada(true);
+      pantallaMemoriaSet(f.id, filas || []); /* v0.3.2: aliméntale la memoria a la pantalla */
+      return filas;
+    } catch (e) {
       log('portada falló en ' + f.id, (e && e.message) || String(e));
       return null;
     }
@@ -1004,15 +1016,63 @@ function fuenteDePantalla(state) {
 /* Las mismas filas del Inicio, con la fuente elegida en EL LIENZO
  * (no el setting de Ajustes). Cada fila viaja sellada con su fuente
  * (fila.fuente) para que «Todas» pueda agrupar por bloques tocables. */
+/* La memoria de la pantalla: filas recortadas con marca de tiempo. La
+ * pantalla NO puede usar el navegador oculto (la plataforma lo niega fuera
+ * de search/home/browse/episodes/details/section/resolve), así que las
+ * fuentes que dependen de él (yandi) se sirven de lo guardado en
+ * cualquier flujo en que el teléfono sí pudo (escuela AniJing, memoria
+ * de secciones). */
+function pantallaMemoriaSet(fid, filas) {
+  try {
+    if (!kino.storage || typeof kino.storage.set !== 'function' || !Array.isArray(filas) || !filas.length) return;
+    const delgadas = filas.slice(0, 4).map(function (fila) {
+      return { id: fila.id, title: fila.title, ref: fila.ref, items: (fila.items || []).slice(0, 20) };
+    });
+    if (!delgadas.length) return;
+    kino.storage.set('djMemoria:' + fid, { t: Date.now(), filas: delgadas });
+  } catch (e) { /* la memoria falla sin miedo */ }
+}
+
+function pantallaMemoriaGet(fid) {
+  try {
+    const raw = (kino.storage && typeof kino.storage.get === 'function') ? kino.storage.get('djMemoria:' + fid) : null;
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.filas) || !raw.filas.length) return null;
+    return raw;
+  } catch (e) { return null; }
+}
+
+function pantallaEdad(t) {
+  const mins = Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : -1;
+  if (mins < 0) return 'edad desconocida';
+  if (mins < 60) return 'de hace ' + mins + ' min';
+  return 'de hace ' + Math.round(mins / 60) + ' h';
+}
+
 async function pantallaCargar(fuente) {
   const elegida = fuenteValidaPantalla(fuente) || 'todas';
   const fuentes = (elegida !== 'todas' && FUENTES[elegida]) ? [FUENTES[elegida]] : Object.values(FUENTES);
   const rtas = await Promise.all(fuentes.map(async (f) => {
-    try { const filas = await f.portada(true); for (const fila of filas || []) fila.fuente = f.id; return filas || []; }
-    catch (e) {
+    let filas = null;
+    try {
+      filas = await f.portada(true);
+      for (const fila of filas || []) fila.fuente = f.id;
+    } catch (e) {
       log('portada falló en ' + f.id + ' (pantalla)', (e && e.message) || String(e));
-      return [];
     }
+    /* v0.3.2: la memoria pesca EN LOS DOS CASOS — la fuente que TIRA y
+     * la fuente que se traga su error y devuelve vacía (la casita
+     * de yandi devolvía [] sin vomitar jamás). */
+    if (filas && filas.length) {
+      pantallaMemoriaSet(f.id, filas);
+      return filas;
+    }
+    const mem = pantallaMemoriaGet(f.id);
+    if (mem) {
+      log('la pantalla usó la memoria de ' + f.id + ' (' + pantallaEdad(mem.t) + ')');
+      for (const fila of mem.filas) fila.fuente = f.id;
+      return mem.filas;
+    }
+    return [];
   }));
   const filas = [];
   for (let i = 0; i < fuentes.length; i++) {
