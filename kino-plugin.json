@@ -15,7 +15,11 @@
     "www.yandispoiler.net",
     "doramaslatinox.com",
     "www.doramaslatinox.com",
-    "*.translate.goog"
+    "*.translate.goog",
+    "dailymotion.com",
+    "www.dailymotion.com",
+    "geo.dailymotion.com",
+    "*.dmcdn.net"
   ],
   "streamHosts": "any",
   "browser": "pages",
