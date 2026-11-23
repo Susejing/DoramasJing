@@ -152,7 +152,21 @@
 // DoramasLatinoX» confiesa TODO (scripts, postid, respuesta letra a letra
 // de cada candidata). La captura con autoplay queda de segundo resort.
 
-const VERSION = '0.3.7';
+// v0.3.8 «EL CARGADOR CONFESÓ MÁS» (24 nov 01:09, la sondea v1 corrió en
+// el teléfono): doo_player_ajax ES el action del sitio (200 con el JSON
+// {"embed_url":"","type":false}; las otras cuatro candidatas, 400), la
+// página del episodio confesó postid=6411 por el body class, y el script
+// iamcdn.net/players/replace-domain.js revela los reproductores ajens
+// (abyssplayer.com / mobomark2021.com sobre las fuentes cortas short.ink /
+// short.icu, re-direccionadas al origen vivo). Cura: combinaciones del POST
+// (nume relleno con cero, sin sece y con el postid de la SERIE como
+// alternativa, porque algunos temas guardan el reproductor en la ficha de
+// la serie), lectura del embed confesado (solo mp4/m3u8 vale como media;
+// un embed de reproductor ajeno queda de pista en el Registro) y la sondea
+// ya no recorta los scripts (los vuelca por bloques) y añade las menciones
+// de admin-ajax/doo_player/embed_url del HTML para cazar el cargador.
+
+const VERSION = '0.3.8';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -1244,11 +1258,12 @@ async function resolverAlternoDlat(idEp, idx) {
 
 // ---------- v0.3.7: EL MENSAJERO DEL AJAX ----------
 
-/* Las candidatas del action (el patrón dooplay y sus variantes típicas de
- * los temas de WordPress de estos sitios: el reproductor se pide con POST
- * action=<candidata>&post=<id>&nume=<n>&sece=<s>). Sin fuerza bruta: la
- * primera que confiese gana (resolve tiene 75 s y el mensajero es barato). */
-const CANDIDATAS_DLAT = ['doo_player_ajax', 'dooplay_player_ajax', 'dt_player_ajax', 'doo_player', 'player_ajax'];
+/* v0.3.8: UNA sola candidata — la sondea v1 (teléfono, 01:09) cantó que
+ * doo_player_ajax ES el action (status 200 con el JSON
+ * {"embed_url":"","type":false}) y las cuatro variantes contestaron 400.
+ * La puerta es esa; las llaves (combinaciones nume/sece/post) se prueban
+ * dentro de roboDeCargador. */
+const ACT_DLAT = 'doo_player_ajax';
 
 /* El postid del episodio vive en el body class (single-post postid-NNNN)
  * o en un id="post-NNNN" asomando; helper tolerante. */
@@ -1306,39 +1321,97 @@ async function roboDeCargador(idEp, modoSonda) {
   }
   const pid = pidDePagina(html);
   if (modoSonda) {
-    const srcs = (html.match(/src=["'][^"']+\.js[^"']*/gi) || []).slice(0, 8);
-    log('sonda cargador dlat ' + id + ': página ' + html.length + ' letras, postid=' + (pid || 'NINGUNO') + ', scripts: ' + (srcs.length ? srcs.join(' | ').slice(0, 500) : 'NINGUNO'));
+    /* v0.3.8: la sondea ya NO recorta los scripts (la v1 dejó el cargador
+     * fuera de la foto recortando en 500 chars): lista completa por
+     * bloques + body íntegro + menciones de admin-ajax/doo_player/embed_url
+     * del HTML con su contexto. */
+    const srcs = (html.match(/src=["'][^"']+\.js[^"']*/gi) || []);
+    const bodyTag = (/<body[^>]*>/.exec(html) || [''])[0];
+    log('sonda cargador dlat ' + id + ': página ' + html.length + ' letras, postid=' + (pid || 'NINGUNO') + ', scripts TOTAL ' + srcs.length + ', body=' + bodyTag.slice(0, 400));
+    for (let s0 = 0; s0 < srcs.length && s0 < 24; s0 += 6) {
+      log('sonda cargador dlat scripts ' + (s0 + 1) + '-' + Math.min(s0 + 6, srcs.length) + ': ' + srcs.slice(s0, s0 + 6).join(' | ').slice(0, 900));
+    }
+    const oc = [];
+    const reOc = /admin-ajax|doo_player|embed_url|box_links/gi;
+    let mo;
+    while ((mo = reOc.exec(html)) !== null && oc.length < 6) {
+      oc.push(mo[0] + ' @' + mo.index + ': ' + html.slice(Math.max(0, mo.index - 80), mo.index + 140).replace(/\s+/g, ' '));
+    }
+    log('sonda cargador dlat menciones (' + oc.length + '): ' + (oc.length ? oc.join(' ;; ') : 'NINGUNA'));
   }
   if (!pid) return null;
+  /* v0.3.8: COMBINACIONES del mensajero — la primera sondea (teléfono
+   * 01:09) cantó que doo_player_ajax ES la puerta (200, JSON
+   * {"embed_url":"","type":false}) pero con postid=6411&nume=6&sece=1 el
+   * embed vino vacío. Probar: nume relleno, sin sece, y el postid de la
+   * SERIE (algunos temas guardan el reproductor en la ficha de la serie,
+   * no en el episodio; el postid de la serie se roba de su propia página
+   * SOLO en modo sondea para no gastar fetch en cada play). */
+  let pidSerie = null;
+  if (modoSonda) {
+    try {
+      const serieEnlace = (html.match(/https?:\/\/[^"'\s]+\/series\/[a-z0-9-]+\//i) || [])[0];
+      if (serieEnlace) {
+        const pgS = await traerEnCrudo(serieEnlace.replace(/[>"']*$/, ''), { escalera: false, timeoutMs: 12000 });
+        const hS = pgS && pgS.text ? await pgS.text() : '';
+        pidSerie = pidDePagina(hS);
+        log('sonda cargador dlat: la SERIE ' + serieEnlace.replace(/^https?:\/\//, '') + ' confiesa postid=' + (pidSerie || 'NINGUNO'));
+      }
+    } catch (eSR) { log('sonda cargador dlat: la página de la serie falló: ' + ((eSR && eSR.message) || eSR)); }
+  }
+  const numePad = (nume.length < 2 ? '0' + nume : nume);
+  const combos = [
+    { post: pid, nume: nume, sece: sece },
+    { post: pid, nume: nume },
+    { post: pid, nume: numePad, sece: sece }
+  ];
+  if (pidSerie) combos.push({ post: pidSerie, nume: nume, sece: sece });
   const poses = [];
-  for (let ci = 0; ci < CANDIDATAS_DLAT.length; ci++) {
-    const act = CANDIDATAS_DLAT[ci];
+  for (let ci = 0; ci < combos.length; ci++) {
+    const combo = combos[ci];
+    const cuerpo = 'action=' + ACT_DLAT + '&post=' + combo.post + '&nume=' + combo.nume + (combo.sece ? '&sece=' + combo.sece : '');
     let txt = '';
     let st = 0;
     try {
       const r = await kino.fetch(BASE_DLAT + '/wp-admin/admin-ajax.php', {
         method: 'POST',
         headers: { Accept: '*/*', 'content-type': 'application/x-www-form-urlencoded', Referer: BASE_DLAT + '/episodio/' + id + '/' },
-        body: 'action=' + act + '&post=' + pid + '&nume=' + nume + '&sece=' + sece,
+        body: cuerpo,
         timeoutMs: 12000
       });
       st = (r && r.status) || 0;
       txt = r && r.text ? await r.text() : '';
     } catch (eA) {
-      if (modoSonda) log('sonda cargador dlat: ' + act + ' FALLÓ: ' + ((eA && eA.message) || eA));
+      if (modoSonda) log('sonda cargador dlat: ' + cuerpo + ' FALLÓ: ' + ((eA && eA.message) || eA));
       continue;
     }
+    /* v0.3.8: el mensajero puede confesar un embed directo ({"embed_url":
+     * "https://short.ink/…", "type": …}) — mp4/m3u8 SÍ vale como media;
+     * un embed de reproductor ajeno (abyssplayer/short.ink según el
+     * replace-domain.js) queda SOLO de pista: servirlo como Stream truena
+     * en el reproductor de Kino. */
+    let embedConfesado = null;
+    const t2 = String(txt || '').trim();
+    if (t2.charAt(0) === '{') {
+      try {
+        const j = JSON.parse(t2);
+        if (j && typeof j.embed_url === 'string' && j.embed_url) embedConfesado = j.embed_url;
+      } catch (eJ) { /* no era json */ }
+    }
     const mH = mediaDeCargador(txt);
-    if (modoSonda) log('sonda cargador dlat: ' + act + ' → status ' + st + ', ' + txt.length + ' letras, media=' + mH.media.length + (mH.iframes.length ? ', iframes: ' + mH.iframes.join(', ') : '') + ' · ' + txt.slice(0, 160).replace(/\s+/g, ' '));
-    poses.push(act);
+    if (embedConfesado && /\.(mp4|m3u8)/i.test(embedConfesado) && mH.media.length === 0) {
+      mH.media.push({ url: embedConfesado, mime: /\.m3u8/i.test(embedConfesado) ? 'application/x-mpegURL' : 'video/mp4', headers: { Referer: BASE_DLAT + '/' } });
+    }
+    if (modoSonda) log('sonda cargador dlat: ' + cuerpo + ' → status ' + st + ', ' + txt.length + ' letras, media=' + mH.media.length + (embedConfesado ? ', embed: ' + embedConfesado : '') + (mH.iframes.length ? ', iframes: ' + mH.iframes.join(', ') : '') + ' · ' + t2.slice(0, 160).replace(/\s+/g, ' '));
+    poses.push(cuerpo);
     if (mH.media.length) {
-      const memo = { t: Date.now(), media: mH.media, subs: [], via: 'ajax:' + act };
+      const memo = { t: Date.now(), media: mH.media, subs: [], via: 'ajax' };
       try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memo); } catch (eS) { /* la memoria nunca rompe */ }
-      log('dlat robo ' + id + ': el mensajero confesó ' + memo.media.length + ' enlace(s) vía ' + act);
+      log('dlat robo ' + id + ': el mensajero confesó ' + memo.media.length + ' enlace(s) (' + cuerpo.slice(0, 60) + ')');
       return memo;
     }
   }
-  if (modoSonda) log('sonda cargador dlat: ninguna candidata entregó media (' + poses.join(', ') + ')');
+  if (modoSonda) log('sonda cargador dlat: ninguna combinación entregó media (' + poses.join(' | ') + ')');
   return null;
 }
 
