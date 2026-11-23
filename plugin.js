@@ -156,7 +156,7 @@
 // el teléfono): doo_player_ajax ES el action del sitio (200 con el JSON
 // {"embed_url":"","type":false}; las otras cuatro candidatas, 400), la
 // página del episodio confesó postid=6411 por el body class, y el script
-// iamcdn.net/players/replace-domain.js revela los reproductores ajens
+// iamcdn.net/players/replace-domain.js revela los reproductores ajenos
 // (abyssplayer.com / mobomark2021.com sobre las fuentes cortas short.ink /
 // short.icu, re-direccionadas al origen vivo). Cura: combinaciones del POST
 // (nume relleno con cero, sin sece y con el postid de la SERIE como
@@ -166,7 +166,19 @@
 // ya no recorta los scripts (los vuelca por bloques) y añade las menciones
 // de admin-ajax/doo_player/embed_url del HTML para cazar el cargador.
 
-const VERSION = '0.3.8';
+// v0.3.9 «LA TAQUILLA» (24 nov 01:21, la sondea v2 corrió en el teléfono y
+// CONFESÓ EL SECRETO: el dtAjax del tema declara player_api =
+// /wp-json/dooplayer/v2/ con play_method wp_json — el reproductor del tema
+// NO vive en el ajax, que ya cantó embed vacío 4/4). La ruta REST real se
+// confirmó en vivo: /wp-json/dooplayer/v2/<postid>/tv/<fuente> entrega el
+// embed (fuente 1 y 2: Dailymotion geo.dailymotion.com player.html =
+// video=x8onmau / x8izpz3; fuentes 3..5 = null; postid de la serie = null).
+// CURA: la taquilla pregunta a la REST FIRST (GET barato, sin nonce) y el
+// embed de Dailymotion se COBRA con su metadata pública
+// (/player/metadata/video/<id>, escuela AniJing exDailymotion: qualities
+// auto/1080/… → m3u8 con Referer dailymotion). El ajax queda de respaldo.
+
+const VERSION = '0.3.9';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -1298,6 +1310,60 @@ function mediaDeCargador(txt) {
   return { media: media, iframes: iframes };
 }
 
+/* v0.3.9 «LA TAQUILLA»: el embed que la REST confiesa es Dailymotion
+ * (geo.dailymotion.com/player.html?video=XID, también player/<pid>.html
+ * y embed/video/XID). El cobro del m3u8 usa la metadata pública del
+ * player (escuela AniJing exDailymotion, probada en producción):
+ * qualities auto/1080/720/… → m3u8 con Referer de Dailymotion. Un embed
+ * de OTRO reproductor ajeno no se cobra (los mp4/m3u8 crudos ya valen
+ * por mediaDeCargador). Nunca lanza: devuelve [] para que el flujo caiga
+ * al respaldo (ajax → captura). */
+async function cobrarDailymotion(embed, modoSonda) {
+  const u = String(embed || '');
+  const mD = /(?:geo\.)?dailymotion\.com\/(?:player(?:\/[a-z0-9.]+)?\.html\?video=|embed\/video\/|video\/)([a-z0-9]+)/i.exec(u);
+  if (!mD) return [];
+  let j = null;
+  try {
+    const r = await kino.fetch('https://www.dailymotion.com/player/metadata/video/' + mD[1], {
+      headers: { Accept: 'application/json,*/*', Referer: 'https://www.dailymotion.com/' },
+      timeoutMs: 12000
+    });
+    const t = r && r.text ? await r.text() : '';
+    j = JSON.parse(t);
+  } catch (eC) {
+    if (modoSonda) log('sonda taquilla dlat: la metadata de Dailymotion (' + mD[1] + ') falló: ' + ((eC && eC.message) || eC));
+    return [];
+  }
+  if (!j || j.error) {
+    if (modoSonda) log('sonda taquilla dlat: Dailymotion negó el video ' + mD[1] + ' (' + (j && j.error ? (j.error.title || j.error.type || 'error') : 'respuesta sin qualities') + ')');
+    return [];
+  }
+  const cualidades = j.qualities || {};
+  let mejor = null;
+  for (const clave of ['auto', '1080', '720', '480', '380', '240']) {
+    for (const f of (cualidades[clave] || [])) {
+      if (f && f.url && /mpegurl|m3u8|mp4/i.test(String(f.type || '') + '/' + String(f.url || ''))) { mejor = f.url; break; }
+    }
+    if (mejor) break;
+  }
+  if (!mejor) {
+    /* último recurso: cualquier m3u8 en las cualidades */
+    for (const q of Object.keys(cualidades)) {
+      for (const f of (cualidades[q] || [])) {
+        if (f && /\.m3u8/i.test(String(f.url || ''))) { mejor = f.url; break; }
+      }
+      if (mejor) break;
+    }
+  }
+  if (!mejor) {
+    if (modoSonda) log('sonda taquilla dlat: Dailymotion ' + mD[1] + ' confesó pero sin m3u8 (' + JSON.stringify(Object.keys(cualidades)) + ')');
+    return [];
+  }
+  const mime = /\.m3u8/i.test(mejor) ? 'application/x-mpegURL' : 'video/mp4';
+  if (modoSonda) log('sonda taquilla dlat: Dailymotion ' + mD[1] + ' CHAROLÓ: ' + mejor.slice(0, 120));
+  return [{ url: mejor, mime: mime, headers: { Referer: 'https://www.dailymotion.com/' } }];
+}
+
 /* La táctica de la 0.3.7: la página del episodio confiesa su postid, el
  * teléfono pregunta al mensajero (admin-ajax por POST, candidatas
  * clásicas) y lo que confiese viaja como Stream con Referer. La pesca
@@ -1332,7 +1398,7 @@ async function roboDeCargador(idEp, modoSonda) {
       log('sonda cargador dlat scripts ' + (s0 + 1) + '-' + Math.min(s0 + 6, srcs.length) + ': ' + srcs.slice(s0, s0 + 6).join(' | ').slice(0, 900));
     }
     const oc = [];
-    const reOc = /admin-ajax|doo_player|embed_url|box_links/gi;
+    const reOc = /admin-ajax|doo_player|embed_url|box_links|dooplayer|player_api|dtAjax/gi;
     let mo;
     while ((mo = reOc.exec(html)) !== null && oc.length < 6) {
       oc.push(mo[0] + ' @' + mo.index + ': ' + html.slice(Math.max(0, mo.index - 80), mo.index + 140).replace(/\s+/g, ' '));
@@ -1358,6 +1424,40 @@ async function roboDeCargador(idEp, modoSonda) {
         log('sonda cargador dlat: la SERIE ' + serieEnlace.replace(/^https?:\/\//, '') + ' confiesa postid=' + (pidSerie || 'NINGUNO'));
       }
     } catch (eSR) { log('sonda cargador dlat: la página de la serie falló: ' + ((eSR && eSR.message) || eSR)); }
+  }
+  /* v0.3.9 «LA TAQUILLA» PRIMERO: la sondea v2 (log 01:21) confesó que el
+   * tema carga su player de la REST /wp-json/dooplayer/v2/<post>/tv/<fuente>
+   * (play_method wp_json) — el ajax confesó embed vacío en TODAS las
+   * combinaciones. Probado en vivo: fuente 1 y 2 = Dailymotion; 3..5 null. */
+  const taquilla = [];
+  for (const fuenteNum of ['1', '2']) {
+    let tyTxt = '';
+    try {
+      const rT = await kino.fetch(BASE_DLAT + '/wp-json/dooplayer/v2/' + pid + '/tv/' + fuenteNum, {
+        headers: { Accept: 'application/json,*/*', Referer: BASE_DLAT + '/episodio/' + id + '/' },
+        timeoutMs: 12000
+      });
+      tyTxt = rT && rT.text ? await rT.text() : '';
+    } catch (eTT) { tyTxt = null; if (modoSonda) log('sonda taquilla dlat: fuente ' + fuenteNum + ' falló: ' + ((eTT && eTT.message) || eTT)); }
+    let tyEmbed = null;
+    const tT = String(tyTxt || '').trim();
+    if (tT.charAt(0) === '{') {
+      try {
+        const jT = JSON.parse(tT);
+        if (jT && typeof jT.embed_url === 'string' && jT.embed_url) tyEmbed = jT.embed_url;
+      } catch (eJT) { /* no era json */ }
+    }
+    if (modoSonda) log('sonda taquilla dlat: dooplayer/' + pid + '/tv/' + fuenteNum + ' → ' + (tyEmbed ? 'embed confesado' : tT.slice(0, 120)));
+    if (tyEmbed) {
+      const cobra = await cobrarDailymotion(tyEmbed, modoSonda);
+      for (const m of cobra) taquilla.push(m);
+      if (taquilla.length) {
+        const memo = { t: Date.now(), media: taquilla, subs: [], via: 'taquilla' };
+        try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memo); } catch (eTT2) { /* la memoria nunca rompe */ }
+        log('dlat robo ' + id + ': la taquilla confesó ' + taquilla.length + ' enlace(s) (REST dooplayer v2, fuente ' + fuenteNum + ')');
+        return memo;
+      }
+    }
   }
   const numePad = (nume.length < 2 ? '0' + nume : nume);
   const combos = [
