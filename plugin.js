@@ -107,7 +107,7 @@
 // El año de la ficha se busca DESPUÉS del título (kdla pintaba un «2000»
 // ajeno) y el aviso vacío de la pantalla ahora enseña el camino: Inicio
 // o lupa llenan la memoria.
-// v0.3.0 «LA FLECHITA EN EL LIENZO» (22 nov, scuola AniJing screen):
+// v0.3.0 «LA FLECHITA EN EL LIENZO» (22 nov, escuela AniJing screen):
 // pantalla propia con selector de fuente EN EL LIENZO (botón «tune»
 // arriba: lista con ✓ sobre la fuente activa; cada bloque de «Todas»
 // lleva su encabezado tocable), filas reutilizadas del Inicio y la
@@ -124,7 +124,21 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.3.4';
+// v0.3.5 «EL REPRODUCTOR ROBA EL SERVIDOR» (23 nov, capturas 23:28): el
+// log dio la victoria del listado («la lista apareció en la búsqueda (?s=)»
+// para la luna, la mesa final y más) y quedó UN solo pendiente gordo: el
+// reproductor («resolver v0.1», players=0). Los servidores de dlat viajan
+// POR JAVASCRIPT (el box_links del HTML crudo trae vacío) — cura:
+// resolver() abre la página del episodio con kino.browser.capture (la
+// cura del contrato: capture SOLO vive en resolve, la persona ya tocó
+// Play) y devuelve media[0].url CON sus headers. Los demás servidores
+// que la captura pesque viajan como copias perezosas etiquetadas
+// ({ label, ref }) que Kino captura solo si la principal falla (contrato:
+// resolve con 75 s, 2-3 servidores, no todos a la vez). kdla/yandi
+// honestos con mensaje que guía (el pendiente de kdla viaja por JS; la
+// aduana de las flores de yandi quedó en la mesa).
+
+const VERSION = '0.3.5';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -141,6 +155,39 @@ function registrarFuente(f) { FUENTES[f.id] = f; }
 
 function log(m, extra) {
   try { kino.log('[DoramasJing] ' + m, extra); } catch (e) { /* el Registro nunca rompe */ }
+}
+
+/* v0.3.5: la fábrica del Stream desde una captura exitosa. El PRIMER
+ * servidor viaja como Stream directo (url CON sus headers: Referer/UA que
+ * el navegador mandó — el video los exige); los demás (hasta 3) viajan
+ * como copias perezosas etiquetadas { label, ref } que Kino captura solo
+ * si la principal falla (contrato:Stream.label ≤ 48, ref ≤ 512;
+ * resolve tiene 75 s — 2-3 servidores, NUNCA todos a la vez). */
+function streamDeCaptura(id, cap, desdeMemoria) {
+  const media = (cap && Array.isArray(cap.media)) ? cap.media : [];
+  const subs = (cap && Array.isArray(cap.subs)) ? cap.subs : [];
+  const primero = media[0] || {};
+  const headers = primero && primero.headers ? Object.assign({}, primero.headers) : undefined;
+  const et = String(primero.url || '').replace(/^https?:\/\//, '').split('/')[0];
+  const st = {
+    url: primero.url,
+    mime: primero.mime || 'video/mp4',
+    label: ('DoramasLatinoX · ' + (et || 'servidor')).slice(0, 48)
+  };
+  if (headers && Object.keys(headers).length) st.headers = headers;
+  if (subs.length) st.subtitles = subs;
+  /* copias perezosas: ref 'dlat2:<id>:<index>' — captura SEPARADA cuando
+   * Kino la pida (su propio presupuesto). */
+  const alts = [];
+  for (let i = 1; i < media.length && alts.length < 3; i++) {
+    const mUrl = String(media[i].url || '');
+    if (!mUrl || mUrl === primero.url) continue;
+    const et2 = mUrl.replace(/^https?:\/\//, '').split('/')[0];
+    alts.push({ label: ('Servidor ' + (i + 1) + ' · ' + (et2 || 'extra')).slice(0, 48), ref: 'dlat2:' + id + ':' + i });
+  }
+  if (alts.length) st.alternatives = alts;
+  log('dlat stream ' + id + (desdeMemoria ? ' (memoria)' : '') + ': principal ' + et + (alts.length ? ' +' + alts.length + ' alternativa(s)' : ''));
+  return st;
 }
 
 function errorDe(code, msg, userMessage) {
@@ -567,7 +614,7 @@ registrarFuente({
   },
 
   async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear Kdramas.lat» en Ajustes y mándame el Registro.');
+    throw errorDe('unavailable', 'resolver kdla pendiente', 'Kdramas.lat esconde los servidores detrás de JavaScript (la lista de capítulos también): es el pendiente gordo de la 0.4. Mira este dorama en DoramasLatinoX o en la otra fuente mientras tanto.');
   }
 });
 
@@ -676,7 +723,7 @@ registrarFuente({
   },
 
   async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear Yandispoiler» en Ajustes y mándame el Registro.');
+    throw errorDe('unavailable', 'resolver yandi pendiente', 'Yandispoiler guarda sus servidores tras una aduana de JavaScript (el juego de las flores): es el otro pendiente de la 0.4. Mira este dorama en DoramasLatinoX mientras tanto.');
   }
 });
 
@@ -767,12 +814,12 @@ function vecinosDeEpisodio(html) {
  * 2) si la página ya muestra ≥2 anclas con OTRO slug, re-leerla con ese
  * slug (la página confesó el vecino en su propia carne); 3) visitar la
  * página del vecino (hasta 3) y robar su «Season Episodes List». */
-/* v0.2.4 (Registro VI, log 01:49): la ficha de «cuando-encuentre la moon»
+/* v0.2.4 (Registro VI, log 01:49): la ficha de «cuando-encuentre la luna»
  * traía SU lista bajo el slug del vecino «amor-bajo-la-luz-de la luna» y
  * la cura se cayó al respaldo de búsqueda: la guarda exigía DOS vecinos
  * distintos y solo había UNO. Ahora un único vecino basta SI comparte
  * alguna palabra (≥3 letras) con el slug. Y como la barra lateral puede
- * meter episodiós de otros shows, los vecinos se ordenan por palabras
+ * meter episodios de otros shows, los vecinos se ordenan por palabras
  * compartidas antes de re-leer o visitar. */
 function puntosDeVecino(vslug, slug) {
   const palabras = (' ' + slug + ' ').split('-').filter(function (w) { return w.length >= 3; });
@@ -913,8 +960,57 @@ registrarFuente({
     return eps;
   },
 
-  async resolver() {
-    throw errorDe('unavailable', 'resolver v0.1', 'La lupa v0.2 afina fichas y episodios: el reproductor llega en la 0.3. Toca «Sondear DoramasLatinoX» en Ajustes y mándame el Registro.');
+  /* v0.3.5: la captura viva, separada del Stream (la usa el resolver
+   * principal Y las alternativas perezosas 'dlat2:' — memoria salvo
+   * fresh). */
+  async capturaDeEpisodio(idEp, fresco) {
+    const id = String(idEp || '').trim();
+    if (!fresco) {
+      try {
+        const memo = kino.storage && typeof kino.storage.get === 'function' ? kino.storage.get('djResolv:' + id) : null;
+        if (memo && memo.media && memo.media.length && Number.isFinite(memo.t) && (Date.now() - memo.t) < 600000) return memo;
+      } catch (eM) { /* la memoria nunca rompe */ }
+    }
+    if (kino.browser && typeof kino.browser.capture === 'function') {
+      try {
+        const cap = await kino.browser.capture(BASE_DLAT + '/episodio/' + id + '/', { timeoutMs: 25000 });
+        const media = cap && Array.isArray(cap.media) ? cap.media : [];
+        if (media.length) {
+          const memo = { t: Date.now(), media: media.slice(0, 4), subs: cap.subtitles || [] };
+          try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memo); } catch (eS) {}
+          log('dlat resolver ' + id + ': la captura pescó ' + media.length + ' servidor(es) — ' + media.map(function (m) { return String(m.url || '').split('/')[2] || '?'; }).join(', '));
+          return memo;
+        }
+        log('dlat resolver ' + id + ': la captura no pescó video');
+      } catch (eC) {
+        const codeC = (eC && eC.code) || '';
+        if (codeC !== 'busy' && codeC !== 'blocked' && codeC !== 'not_allowed' && codeC !== 'timeout') log('dlat resolver ' + id + ': la captura falló: ' + ((eC && eC.message) || eC));
+        else log('dlat resolver ' + id + ': la captura no pudo (' + codeC + ')');
+      }
+    } else {
+      log('dlat resolver ' + id + ': sin navegador de captura en este Kino');
+    }
+    return null;
+  },
+
+  /* v0.3.5 «EL REPRODUCTOR ROBA EL SERVIDOR»: memoria primero (10 min),
+   * captura después, y la fábrica streamDeCaptura arma el Stream con
+   * copias perezosas etiquetadas. Sin nada: caída honesta que pide
+   * reintentar (la captura a la segunda suele pescar). */
+  async resolver(idEp) {
+    const id = String(idEp || '').trim();
+    if (!/^[a-z0-9-]+\d+x\d+$/i.test(id)) {
+      throw errorDe('not_found', 'episodio inválido', 'Ese episodio ya no es válido. Vuelve a la lista de capítulos.');
+    }
+    const memo = await this.capturaDeEpisodio(id, false);
+    if (memo && memo.media && memo.media.length) {
+      return streamDeCaptura(id, memo, true);
+    }
+    const cap = await this.capturaDeEpisodio(id, true);
+    if (cap && cap.media && cap.media.length) {
+      return streamDeCaptura(id, cap, false);
+    }
+    throw errorDe('unavailable', 'resolver dlat sin video', 'El servidor de este episodio usa JavaScript que la captura no pescó esta vez. Reintenta (a la segunda suelen asomarse los enlaces) o mira el título en otra fuente.');
   }
 });
 
@@ -1064,13 +1160,47 @@ async function details(ref) {
 }
 
 async function resolve(ref) {
+  /* v0.3.5: las copias perezosas del reproductor viajan con ref
+   * 'dlat2:<id>:<index>' (captura SEPARADA del mismo episodio — el
+   * contrato: cada ref de alternativa llama resolve(ref) entero cuando
+   * Kino la necesita). Va ANTES de partirRef (dlat2 no es fuente). */
+  const dlat2 = /^dlat2:([a-z0-9-]+\d+x\d+):(\d+)$/i.exec(String(ref || ''));
+  if (dlat2) {
+    return resolverAlternoDlat(dlat2[1], parseInt(dlat2[2], 10));
+  }
   const p = partirRef(ref);
-  if (!p || !FUENTES[p.fuente] || !p.partes[0]) {
+  if (!p || !FUENTES[p.fuente]) {
+    throw kino.error('not_found', 'ref inválida', {
+      userMessage: 'Ese título ya no es válido. Búscalo de nuevo.'
+    });
+  }
+  if (!p.partes[0]) {
     throw kino.error('not_found', 'ref inválida', {
       userMessage: 'Ese título ya no es válido. Búscalo de nuevo.'
     });
   }
   return FUENTES[p.fuente].resolver(p.partes[0], 1, null);
+}
+
+/* v0.3.5: el ref perezoso 'dlat2:id:idx' — captura FRESCA (la memoria del
+ * resolver devuelve SIEMPRE el principal; la alternativa necesita el
+ * servidor idx) y se sirve media[idx] con la misma fábrica (que a su vez
+ * etiqueta a los demás). */
+async function resolverAlternoDlat(idEp, idx) {
+  const f = FUENTES['dlat'];
+  if (!f || typeof f.capturaDeEpisodio !== 'function') {
+    throw errorDe('unavailable', 'alternativa no disponible', 'Ese servidor no está disponible ahora. Reintenta la reproducción.');
+  }
+  const cap = await f.capturaDeEpisodio(idEp, true);
+  const media = (cap && Array.isArray(cap.media)) ? cap.media : [];
+  const elegido = media[idx] || {};
+  if (!elegido.url) throw errorDe('unavailable', 'alternativa no disponible', 'Ese servidor ya no sirve. Reintenta la reproducción.');
+  const et2 = String(elegido.url).replace(/^https?:\/\//, '').split('/')[0];
+  const st = { url: elegido.url, mime: elegido.mime || 'video/mp4', label: ('Servidor ' + (idx + 1) + ' · ' + (et2 || 'extra')).slice(0, 48) };
+  if (elegido.headers && Object.keys(elegido.headers).length) st.headers = Object.assign({}, elegido.headers);
+  if (cap && Array.isArray(cap.subs) && cap.subs.length) st.subtitles = cap.subs;
+  log('dlat stream alterno ' + idEp + '#' + idx + ': ' + et2);
+  return st;
 }
 
 /* ---------- los sondeos (el corazón de la lupa) ---------- */
