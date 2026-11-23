@@ -76,6 +76,16 @@
 // /_next/image?url=… → el decodificador TMDB gana ANTES que el proxy. Y
 // el navegador oculto ya no acepta páginas 404 disfrazadas de éxito.
 //
+// v0.3.4 «LA MEMORIA CRECE CON LA LUPA» (22 nov, capturas 21:51): la
+// memoria de yandi seguía virgen porque el paso manual «pasa por el
+// Inicio» pedía disciplina y las búsquedas del teléfono fueron de anime
+// (0 resultados legítimos en sitios de doramas). Cura: si la lupa
+// recibe items de una fuente, una fila «Tus búsquedas» alimenta su
+// memoria SIN pisar las filas de la portada (fusión por id, tope de
+// 6 filas). Buscar un dorama real de Yandispoiler basta para llenar
+// la pantalla. Y la ficha kdla «뿌리깊은 나무» mostró el pendiente de
+// siempre: episodios viajan por JS (sigue en la mesa, con el
+// reproductor, para la obra grande de la 0.3).
 // v0.3.2 «LA MEMORIA DE LA PANTALLA» (22 nov, capturas 19:13): la flechita
 // VIVIÓ en el teléfono (0.3.1: pantalla, selector ✓, bloques tocables,
 // pósters en kdla y dlat) — pero yandi «sin datos por ahora»: el navegador
@@ -114,7 +124,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.3.3';
+const VERSION = '0.3.4';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -973,6 +983,17 @@ async function search(query) {
       userMessage: 'Ninguna fuente de doramas respondió la búsqueda.'
     });
   }
+  /* v0.3.4: TESORO PARA LA PANTALLA — si una fuente contestó la lupa, su
+   * memoria de la pantalla crece con una fila «Tus búsquedas» (la aduana
+   * de la memoria fusiona; cualquier título hallado llena el bloque de
+   * esa fuente en el lienzo propio, yandispoiler incluida: la lupa SÍ
+   * puede usar el navegador oculto). */
+  for (let iFu = 0; iFu < fuentes.length; iFu++) {
+    const itemsLupa = (respuestas[iFu] && respuestas[iFu].items) || [];
+    if (!itemsLupa.length) continue;
+    const filaLupa = { id: 'lupa-' + fuentes[iFu].id, title: 'Tus búsquedas · ' + ((fuentes[iFu] && fuentes[iFu].etiqueta) || fuentes[iFu].id), ref: '', items: itemsLupa.slice(0, 20) };
+    try { pantallaMemoriaSet(fuentes[iFu].id, [filaLupa]); } catch (eM) { /* la memoria nunca rompe la lupa */ }
+  }
   if (!salida.length) log('search «' + q + '»: 0 resultados en las 3 fuentes (normal en la lupa: el sondeo contará cómo busca cada sitio)');
   return salida.slice(0, MAX_ITEMS);
 }
@@ -1110,7 +1131,18 @@ function pantallaMemoriaSet(fid, filas) {
       return { id: fila.id, title: fila.title, ref: fila.ref, items: (fila.items || []).slice(0, 20) };
     });
     if (!delgadas.length) return;
-    kino.storage.set('djMemoria:' + fid, { t: Date.now(), filas: delgadas });
+    /* v0.3.4: la memoria se engorda con cariño — la fila de la lupa se
+     * SUMA sin pisar las de la portada (fuera duplicados por id, tope
+     * de 6 filas por fuente). */
+    const prev = pantallaMemoriaGet(fid);
+    let fin = delgadas;
+    if (prev && Array.isArray(prev.filas) && prev.filas.length) {
+      const viejas = prev.filas.filter(function (x) {
+        return x && x.id && delgadas.every(function (d) { return d.id !== x.id; });
+      });
+      fin = delgadas.concat(viejas).slice(0, 6);
+    }
+    kino.storage.set('djMemoria:' + fid, { t: Date.now(), filas: fin });
   } catch (e) { /* la memoria falla sin miedo */ }
 }
 
