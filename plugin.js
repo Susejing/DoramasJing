@@ -178,7 +178,20 @@
 // (/player/metadata/video/<id>, escuela AniJing exDailymotion: qualities
 // auto/1080/… → m3u8 con Referer dailymotion). El ajax queda de respaldo.
 
-const VERSION = '0.3.9';
+// v0.3.10 «LA CREDENCIAL DEL EMBEBIDO» (24 nov 01:35, la sondea corrió en
+// el teléfono con la 0.3.9): la REST FUNCIONÓ desde el teléfono (ambos
+// embeds confesados) pero Dailymotion contestó a la metadata con su
+// error not_found en AMBOS videos: esa es la firma del candado de
+// dominio, no de video muerto (el video vive: el reproductor del sitio
+// lo abre todos los días). El player del sitio manda embedder=<página>
+// (y player=<id> en el player propio xqjaa) en TODA metadata; sin la
+// credencial, DM finge que no existe. CURA: cobrarDailymotion pide la
+// metadata CON credencial (embedder=página del episodio, player si el
+// embed lo trae, Referer de la página, Origin geo.dailymotion) y de
+// respaldo la pelada; pista en el log si la queja huele a candado
+// regional. Si NI CON credencial charola, la fuente queda honesta.
+
+const VERSION = '0.3.10';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -1318,24 +1331,47 @@ function mediaDeCargador(txt) {
  * de OTRO reproductor ajeno no se cobra (los mp4/m3u8 crudos ya valen
  * por mediaDeCargador). Nunca lanza: devuelve [] para que el flujo caiga
  * al respaldo (ajax → captura). */
-async function cobrarDailymotion(embed, modoSonda) {
+async function cobrarDailymotion(embed, modoSonda, paginaEpisodio) {
   const u = String(embed || '');
   const mD = /(?:geo\.)?dailymotion\.com\/(?:player(?:\/[a-z0-9.]+)?\.html\?video=|embed\/video\/|video\/)([a-z0-9]+)/i.exec(u);
   if (!mD) return [];
+  /* v0.3.10: el reproductor del sitio manda la CREDENCIAL del embebido
+   * (embedder=<página> y player=<id> si es un player propio) con toda
+   * petición de metadata; sin ella Dailymotion finge not_found (firma
+   * del candado de dominio, log 01:35 del teléfono). Primero CON la
+   * credencial y el Referer de la página; luego pelada de respaldo. */
+  const mPlayer = /\/player\/([a-z0-9]+)\.html/i.exec(u);
+  const pagina = String(paginaEpisodio || 'https://doramaslatinox.com/');
+  const variantes = [
+    'https://www.dailymotion.com/player/metadata/video/' + mD[1] + '?embedder=' + encodeURIComponent(pagina) + (mPlayer ? '&player=' + mPlayer[1] : ''),
+    'https://www.dailymotion.com/player/metadata/video/' + mD[1]
+  ];
   let j = null;
-  try {
-    const r = await kino.fetch('https://www.dailymotion.com/player/metadata/video/' + mD[1], {
-      headers: { Accept: 'application/json,*/*', Referer: 'https://www.dailymotion.com/' },
-      timeoutMs: 12000
-    });
-    const t = r && r.text ? await r.text() : '';
-    j = JSON.parse(t);
-  } catch (eC) {
-    if (modoSonda) log('sonda taquilla dlat: la metadata de Dailymotion (' + mD[1] + ') falló: ' + ((eC && eC.message) || eC));
-    return [];
+  let queja = '';
+  for (let vi = 0; vi < variantes.length; vi++) {
+    try {
+      const r = await kino.fetch(variantes[vi], {
+        headers: { Accept: 'application/json,*/*', Referer: (vi === 0 ? pagina : 'https://www.dailymotion.com/'), Origin: 'https://geo.dailymotion.com' },
+        timeoutMs: 12000
+      });
+      const t = r && r.text ? await r.text() : '';
+      const jj = JSON.parse(t);
+      if (jj && jj.error && vi === 0) {
+        /* la credencial fue negada: deja pasar a la variante pelada */
+        queja = String(jj.error.title || jj.error.type || 'error');
+        if (modoSonda) log('sonda taquilla dlat: con credencial negó (' + queja + '); probando pelada');
+        continue;
+      }
+      j = jj;
+      break;
+    } catch (eC) {
+      if (modoSonda) log('sonda taquilla dlat: la metadata de Dailymotion (' + mD[1] + (vi === 0 ? ', con credencial' : ', pelada') + ') falló: ' + ((eC && eC.message) || eC));
+    }
   }
   if (!j || j.error) {
-    if (modoSonda) log('sonda taquilla dlat: Dailymotion negó el video ' + mD[1] + ' (' + (j && j.error ? (j.error.title || j.error.type || 'error') : 'respuesta sin qualities') + ')');
+    const tipo = j && j.error ? (j.error.title || j.error.type || 'error') : 'respuesta sin qualities';
+    const pista = /geo|region|limit|country/i.test(tipo) ? ' [pinta de candado regional]' : (/not_found/i.test(tipo) ? ' [pinta de candado de dominio]' : '');
+    if (modoSonda) log('sonda taquilla dlat: Dailymotion negó el video ' + mD[1] + ' (' + tipo + ')' + pista);
     return [];
   }
   const cualidades = j.qualities || {};
@@ -1449,7 +1485,7 @@ async function roboDeCargador(idEp, modoSonda) {
     }
     if (modoSonda) log('sonda taquilla dlat: dooplayer/' + pid + '/tv/' + fuenteNum + ' → ' + (tyEmbed ? 'embed confesado' : tT.slice(0, 120)));
     if (tyEmbed) {
-      const cobra = await cobrarDailymotion(tyEmbed, modoSonda);
+      const cobra = await cobrarDailymotion(tyEmbed, modoSonda, BASE_DLAT + '/episodio/' + id + '/');
       for (const m of cobra) taquilla.push(m);
       if (taquilla.length) {
         const memo = { t: Date.now(), media: taquilla, subs: [], via: 'taquilla' };

@@ -1,10 +1,10 @@
 {
   "id": "doramasjing",
   "name": "DoramasJing",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Doramas en latino y subtitulado: búsqueda, Inicio, catálogo, fichas, episodios y reproductor en tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX). La 0.3.9 cobra el embed de Dailymotion (REST dooplayer) con el cargador ajax de respaldo. El sello de Susejing.",
+  "description": "Doramas en latino y subtitulado: búsqueda, Inicio, catálogo, fichas, episodios y reproductor en tres fuentes (Kdramas.lat, Yandispoiler y DoramasLatinoX). La 0.3.10 cobra el embed de Dailymotion con la credencial del embebido y deja el cargador ajax de respaldo. El sello de Susejing.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/DoramasJing",
   "visualBrowser": true,
