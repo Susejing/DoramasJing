@@ -124,7 +124,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-// v0.3.5 «EL REPRODUCTOR ROBA EL SERVIDOR» (23 nov, capturas 23:28): el
+// v0.3.6 «EL BOTÓN QUE DA PLAY» (23 nov, log 23:43: capture timeout «nothing playable» — la captura dormida no pesca nada porque el sitio arma el reproductor tras JavaScript; cura: autoplay en la captura + captureAll tras la guardia del contrato). Antes fue v0.3.5 «EL REPRODUCTOR ROBA EL SERVIDOR» (23 nov, capturas 23:28): el
 // log dio la victoria del listado («la lista apareció en la búsqueda (?s=)»
 // para la luna, la mesa final y más) y quedó UN solo pendiente gordo: el
 // reproductor («resolver v0.1», players=0). Los servidores de dlat viajan
@@ -138,7 +138,7 @@
 // honestos con mensaje que guía (el pendiente de kdla viaja por JS; la
 // aduana de las flores de yandi quedó en la mesa).
 
-const VERSION = '0.3.5';
+const VERSION = '0.3.6';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -972,8 +972,19 @@ registrarFuente({
       } catch (eM) { /* la memoria nunca rompe */ }
     }
     if (kino.browser && typeof kino.browser.capture === 'function') {
+      /* v0.3.6: las OPCIONES de la captura (Kino 0.9.54, contrato:
+       * detrás de la guardia captureAll === true; un Kino viejo las
+       * ignora y llama igual). autoplay concentra el sonido para que el
+       * <video> asome (el log 23:43 cantó «the page showed nothing
+       * playable» — el sitio arma el reproductor tras JavaScript y la
+       * captura dormida no pesca nada); captureAll pescar TODOS los
+       * servidores (el menú «Servidor» gana repuestos). */
+      const opts = { timeoutMs: 25000, autoplay: true };
+      if (kino.browser.captureAll === true) {
+        opts.captureAll = true;
+      }
       try {
-        const cap = await kino.browser.capture(BASE_DLAT + '/episodio/' + id + '/', { timeoutMs: 25000 });
+        const cap = await kino.browser.capture(BASE_DLAT + '/episodio/' + id + '/', opts);
         const media = cap && Array.isArray(cap.media) ? cap.media : [];
         if (media.length) {
           const memo = { t: Date.now(), media: media.slice(0, 4), subs: cap.subtitles || [] };
