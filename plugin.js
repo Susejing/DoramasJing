@@ -85,6 +85,18 @@
 // y en la pantalla, si la fuente calla, se devuelve lo guardado con su
 // edad al log. La memoria se llena en cualquier flujo de Kino que sí
 // permita el navegador.
+// v0.3.3 «EL NOMBRE INGLÉS CONFIESA EL SLUG» (22 nov, log 19:26 y sondeos
+// de la 19:27): la ficha de dlat NO trae anclas /episodio/, la página
+// /temporada/slug-temporada-1/ da 404 y el 1x1 del slug de la ficha
+// TAMBIÉN da 404 (los dos 404 del navegador oculto en el log). Pero la
+// ficha confiesa su «Nombre inglés:» (la emperatriz divorciada = The
+// Remarried Empress; el caso luna → when-i-meet-the-moon ya lo cantó
+// en la 0.2.2). Cura: candidatos slug-izados del nombre inglés para la
+// página 1x1 y para la búsqueda CON ESPACIOS (WordPress ignora los
+// guiones en s=; la sondea /?s=amor mostró resultados verdaderos).
+// El año de la ficha se busca DESPUÉS del título (kdla pintaba un «2000»
+// ajeno) y el aviso vacío de la pantalla ahora enseña el camino: Inicio
+// o lupa llenan la memoria.
 // v0.3.0 «LA FLECHITA EN EL LIENZO» (22 nov, scuola AniJing screen):
 // pantalla propia con selector de fuente EN EL LIENZO (botón «tune»
 // arriba: lista con ✓ sobre la fuente activa; cada bloque de «Todas»
@@ -102,7 +114,7 @@
 // selector pedido: setting «Fuente preferida» (todas/kdla/yandi/dlat) que
 // decide qué filas arma el Inicio y a quién pregunta la búsqueda.
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -441,7 +453,16 @@ function infoDePaginaSerie(html, slug, nombre, origen) {
   const dM = /<meta\s+name=["']description["']\s+content=["']([^"']{20,600})["']/i.exec(t);
   const ogD = /<meta\s+property=["']og:description["']\s+content=["']([^"']{20,600})["']/i.exec(t);
   const descM = dM || ogD || /(?:sinopsis|description|resumen)[^>]*>([\s\S]{40,600}?)</i.exec(t);
-  const anhoM = /\b(?:19|20)\d{2}\b/.exec(t);
+  /* v0.3.3 (capturas 19:26): kdla mostraba «2000» — el PRIMER año del HTML
+   * puede ser ajeno (scripts de la cabeza). Ahora se busca DESPUÉS del
+   * título propio y dentro de la ventana del cuerpo. */
+  const posTitulo = (() => {
+    const i1 = t.indexOf('<h1');
+    const i2 = t.indexOf('og:title');
+    const presentes = [i1, i2].filter((x) => x >= 0);
+    return presentes.length ? Math.min.apply(null, presentes) : 0;
+  })();
+  const anhoM = /\b(?:19|20)\d{2}\b/.exec(t.slice(posTitulo, posTitulo + 8000));
   const caraM = /<meta\s+(?:property|name)=["']og:image["']\s+content=["']([^"']+)["']/i.exec(t);
   const info = {
     title: titulo,
@@ -651,6 +672,44 @@ registrarFuente({
 
 /* ---------- fuente: doramaslatinox.com ---------- */
 
+/* v0.3.3 (log 19:26 + sondeos): los capítulos de dlat pueden vivir bajo
+ * OTRO slug que el de la ficha (when-i-meet-the-moon vs la ficha de la
+ * luna — ya lo cantó la 0.2.2), y la propia ficha confiesa su «Nombre
+ * inglés:» y «Nombre original:». De ahí salen candidatos slug-izados. */
+function slugDeTexto(s) {
+  let t = String(s || '').toLowerCase();
+  try { t = t.normalize('NFD'); } catch (eN) { /* sin normalize: vale el texto tal cual */ }
+  return t.replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function valorDeFichaTras(html, clave) {
+  const t = String(html || '');
+  const i = t.indexOf(clave);
+  if (i < 0) return '';
+  const trozo = t.slice(i + clave.length, i + clave.length + 240);
+  const m = /(?:<\/[a-z]+>|:)\s*([A-Za-z0-9][^<>{}\n]{1,80})/i.exec(trozo);
+  return m ? limpio(m[1]) : '';
+}
+
+function nombresDeFicha(html) {
+  const t = String(html || '');
+  const out = [];
+  for (const k of ['Nombre inglés', 'Nombre original']) {
+    const v = valorDeFichaTras(t, k);
+    if (v && out.indexOf(v) < 0) out.push(v);
+  }
+  return out;
+}
+
+function slugsCandidatosDe(slug, fichaHtml) {
+  const out = [String(slug || '')];
+  for (const n of nombresDeFicha(fichaHtml)) {
+    const cs = slugDeTexto(n);
+    if (cs && out.indexOf(cs) < 0) out.push(cs);
+  }
+  return out.slice(0, 3);
+}
+
 /* Huella del 21 nov: los capítulos son /episodio/slug-NxM/ (misma
  * gramática de yandispoiler). Mismo rescate por patrón de URL. */
 function episodiosDlat(html, slug) {
@@ -799,7 +858,8 @@ registrarFuente({
     /* Huella del 21 nov: capítulos /episodio/slug-NxM/ listados en la
      * ficha (y hasta en los resultados de búsqueda). Rescate por patrón. */
     const rta1 = await traerPagina(BASE_DLAT + '/series/' + slug + '/', 12000);
-    let eps = await episodiosDeHuellas([rta1 && rta1.text], slug);
+    const fichaText = rta1 && rta1.ok && rta1.text ? String(rta1.text) : '';
+    let eps = await episodiosDeHuellas([fichaText], slug);
     if (!eps.length) {
       const rta2 = await traerPagina(BASE_DLAT + '/?s=' + encodeURIComponent(slug), 10000);
       eps = await episodiosDeHuellas([rta2 && rta2.text], slug);
@@ -817,6 +877,27 @@ registrarFuente({
       const rta4 = await traerPagina(BASE_DLAT + '/episodio/' + slug + '-1x1/', 12000);
       eps = await episodiosDeHuellas([rta4 && rta4.text], slug);
       if (eps.length) log('dlat episodios ' + slug + ': la lista apareció en la página del episodio 1x1 (Season Episodes List)');
+    }
+    /* v0.3.3 (log 19:26 + sondeos): todo lo de arriba da 404 o vacío con
+     * «La emperatriz divorciada» — pero la ficha CONFIESA «Nombre inglés:
+     * The Remarried Empress». Candidatos slug-izados: página 1x1 del
+     * nombre inglés y búsqueda CON ESPACIOS (WordPress ignora los
+     * guiones en el s=; la sondea /?s=amor mostró resultados verdaderos
+     * y hasta anclas /episodio/ de vecinos). Cada hallazgo al Registro. */
+    if (!eps.length) {
+      const candidatos = slugsCandidatosDe(slug, fichaText);
+      for (const c of candidatos) {
+        if (!c || c === slug) continue;
+        const rc = await traerPagina(BASE_DLAT + '/episodio/' + c + '-1x1/', 12000);
+        eps = rc && rc.ok ? episodiosDlat(rc.text, c) : [];
+        if (eps.length) { log('dlat episodios ' + slug + ': la lista confesó bajo el nombre inglés «' + c + '» (página 1x1)'); return eps; }
+      }
+      for (const c of candidatos) {
+        if (!c || c === slug) continue;
+        const rq = await traerPagina(BASE_DLAT + '/?s=' + encodeURIComponent(c.replace(/-/g, ' ')), 10000);
+        eps = rq && rq.ok ? await episodiosDeHuellas([rq.text], c) : [];
+        if (eps.length) { log('dlat episodios ' + slug + ': la búsqueda con el nombre inglés «' + c + '» trajo la lista'); return eps; }
+      }
     }
     if (!eps.length) throw errorDe('unavailable', 'dlat episodios sin patrón', 'DoramasLatinoX no listó capítulos para este título (las fuentes pueden tener catálogos distintos). Busca la serie en el Inicio o en las otras fuentes.');
     return eps;
@@ -1078,7 +1159,10 @@ async function pantallaCargar(fuente) {
   for (let i = 0; i < fuentes.length; i++) {
     const nom = (fuentes[i] && fuentes[i].etiqueta) || 'la fuente';
     if (rtas[i] && rtas[i].length) for (const fila of rtas[i]) filas.push(fila);
-    else filas.push({ id: 'aviso-' + (fuentes[i] ? fuentes[i].id : 'x'), fuente: fuentes[i] ? fuentes[i].id : 'x', title: nom + ': sin datos por ahora', ref: '', items: [] });
+    /* v0.3.3 (capturas 19:26): «sin datos por ahora» no decía CÓMO salir
+     * del hoyo. El aviso ahora manda al Inicio o a la lupa: ese camino sí
+     * puede usar el navegador oculto y llena la memoria de la pantalla. */
+    else filas.push({ id: 'aviso-' + (fuentes[i] ? fuentes[i].id : 'x'), fuente: fuentes[i] ? fuentes[i].id : 'x', title: nom + ': sin datos por ahora — pasa por el Inicio o busca un título de esta fuente y regresa (eso llena la memoria)', ref: '', items: [] });
   }
   return filas;
 }
