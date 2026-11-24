@@ -191,7 +191,21 @@
 // respaldo la pelada; pista en el log si la queja huele a candado
 // regional. Si NI CON credencial charola, la fuente queda honesta.
 
-const VERSION = '0.3.10';
+// v0.3.11 «LA ÚLTIMA DE LA TAQUILLA» (24 nov 01:43, la prueba de la 0.3.10
+// en el teléfono cantó el escenario prometido: la REST confesó ambos
+// embeds, la metadata negó con credencial Y pelada (x8onmau y x8izpz3,
+// [pinta de candado de dominio]) y el ajax volvió a dar embed vacío):
+// según el acuerdo del registro, las rondas a ciegas acaban. ÚLTIMA
+// mecánica, nunca probada: el player geo de Dailymotion REPRODUCE SOLO
+// cuando el embedder viaja en la URL (el player del sitio espera el
+// toque de dedo: por eso la captura de la página moría en 25 s). La
+// captura de Kino (autoplay + captureAll) va DIRECTO contra esa URL del
+// geo player con embedder=página del episodio, SOLO en play (la sondea
+// no tiene presupuesto de captura) y SOLO cuando la metadata negó.
+// Si tampoco pesca: la fuente dlat se RETIRA (su dueño ya lo pidió y el
+// diagnóstico estará completo: REST viva, metadata negada de verdad).
+
+const VERSION = '0.3.11';
 
 const BASE_KDLA = 'https://kdramas.lat';
 const BASE_YANDI = 'https://yandispoiler.net';
@@ -1487,6 +1501,35 @@ async function roboDeCargador(idEp, modoSonda) {
     if (tyEmbed) {
       const cobra = await cobrarDailymotion(tyEmbed, modoSonda, BASE_DLAT + '/episodio/' + id + '/');
       for (const m of cobra) taquilla.push(m);
+      if (!taquilla.length && tyEmbed.indexOf('dailymotion') >= 0) {
+        /* v0.3.11 «LA ÚLTIMA DE LA TAQUILLA»: la metadata negó el video con
+         * credencial y pelada (candado de dominio, log 01:43). La mecánica
+         * que NUNCA se probó: el player geo de Dailymotion REPRODUCE SOLO
+         * si el embedder viaja en la URL (a diferencia del player del
+         * sitio, que espera el toque); la captura de Kino pescando ese
+         * play es el caso exacto para el que existe. Solo en play (la
+         * sondea no tiene presupuesto de captura). Si tampoco pesca, la
+         * fuente se retira con dignidad (acuerdo del registro). */
+        if (modoSonda) log('sonda taquilla dlat: el geo-captura solo corre en play (no en sondea)');
+        else if (kino.browser && typeof kino.browser.capture === 'function') {
+          const urlGeo = tyEmbed + (tyEmbed.indexOf('?') >= 0 ? '&' : '?') + 'embedder=' + encodeURIComponent(BASE_DLAT + '/episodio/' + id + '/');
+          const optsG = { timeoutMs: 20000, autoplay: true };
+          if (kino.browser.captureAll === true) optsG.captureAll = true;
+          try {
+            const capG = await kino.browser.capture(urlGeo, optsG);
+            const mediaG = capG && Array.isArray(capG.media) ? capG.media : [];
+            if (mediaG.length) {
+              const memoG = { t: Date.now(), media: mediaG.slice(0, 4), subs: (capG && Array.isArray(capG.subtitles)) ? capG.subtitles : [], via: 'geo' };
+              try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memoG); } catch (eTT2) { /* la memoria nunca rompe */ }
+              log('dlat robo ' + id + ': el GEO confesó ' + memoG.media.length + ' enlace(s) por la captura del player de Dailymotion');
+              return memoG;
+            }
+            log('dlat robo ' + id + ': el geo-captura del player de Dailymotion no pescó');
+          } catch (eG) {
+            log('dlat robo ' + id + ': el geo-captura no pudo (' + ((eG && eG.code) || '') + ((eG && eG.code) ? '' : ' ' + String(eG).slice(0, 60)) + ')');
+          }
+        }
+      }
       if (taquilla.length) {
         const memo = { t: Date.now(), media: taquilla, subs: [], via: 'taquilla' };
         try { if (kino.storage && typeof kino.storage.set === 'function') kino.storage.set('djResolv:' + id, memo); } catch (eTT2) { /* la memoria nunca rompe */ }
